@@ -26,6 +26,7 @@
   },
   "packageManager": "pnpm@11.9.0",
   "dependencies": {
-    "three": "^0.185.1"
+    "three": "^0.185.1",
+    "trystero": "^0.25.3"
   }
 }
