@@ -1,12 +1,13 @@
-// SPIKE — not part of the crit-5 deliverable. Lives on `spike/multiplayer`,
-// never merged to main. See docs/spike-multiplayer.md for why and what it found.
+// Who else is on the river. The pure half of the connection: every decision
+// about what the link is *doing* lives here, so the half that cannot be tested
+// (real WebRTC against a real public relay) stays as thin as possible. Nothing
+// in this file imports trystero, touches the DOM, reads the clock, or rolls a
+// die -- times and randomness arrive as arguments, which is what makes
+// connect-latency and room-code generation assertable with nothing mocked.
 //
-// The pure half of the transport spike: every decision about what the
-// connection is *doing* lives here, so the half that can't be tested (real
-// WebRTC against a real relay) stays as thin as possible. Nothing in this file
-// imports trystero, touches the DOM, reads the clock, or rolls a die — times
-// and randomness arrive as arguments. That's what makes connect-latency and
-// room-code generation assertable without mocking anything.
+// This started as a throwaway transport spike (da848c2) and survived contact
+// with the real game unchanged apart from losing its demo action, which is the
+// best argument available that the seam was drawn in the right place.
 
 /**
  * `waiting` is deliberately NOT a failure: being alone in a room is the normal
@@ -23,8 +24,6 @@ export type RoomState = {
   phase: Phase;
   selfId: string | null;
   peers: string[];
-  counter: number;
-  lastNudgeBy: string | null;
   joinedAt: number | null;
   connectedAt: number | null;
   lonely: boolean;
@@ -36,7 +35,6 @@ export type RoomEvent =
   | { type: "settled" }
   | { type: "peer-join"; peerId: string; at: number }
   | { type: "peer-leave"; peerId: string }
-  | { type: "nudge"; from: string; counter: number }
   | { type: "lonely" }
   | { type: "fail"; reason: FailureReason; detail: string }
   | { type: "leave" };
@@ -46,8 +44,6 @@ export function initialState(): RoomState {
     phase: "idle",
     selfId: null,
     peers: [],
-    counter: 0,
-    lastNudgeBy: null,
     joinedAt: null,
     connectedAt: null,
     lonely: false,
@@ -93,15 +89,6 @@ export function reduce(state: RoomState, event: RoomEvent): RoomState {
         phase: peers.length > 0 ? "connected" : "waiting",
       };
     }
-
-    // Counters can cross in flight; max is enough for a one-action spike and
-    // is honest about not being a real convergent type.
-    case "nudge":
-      return {
-        ...state,
-        counter: Math.max(state.counter, event.counter),
-        lastNudgeBy: event.from,
-      };
 
     case "lonely":
       return state.phase === "connected" ? state : { ...state, lonely: true };

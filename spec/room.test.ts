@@ -8,18 +8,18 @@ import {
   roomFromHash,
   type RoomEvent,
   type RoomState,
-} from "../spike-room.ts";
+} from "../room.ts";
 
-// SPIKE test — covers the pure transport logic only. Whether two browsers on
-// two networks actually reach each other is not assertable here; that lives in
-// docs/spike-multiplayer.md as measured findings.
+// Covers the pure connection logic only. Whether two browsers on two different
+// networks actually reach each other is not assertable from Node -- that lives
+// in docs/spike-multiplayer.md as measured findings from real devices.
 
 const run = (events: RoomEvent[], from: RoomState = initialState()): RoomState =>
   events.reduce(reduce, from);
 
 const joined = (at = 1_000): RoomEvent => ({ type: "join", selfId: "me", at });
 
-describe("spike: connection phases", () => {
+describe("connection phases", () => {
   it("starts idle with nothing connected", () => {
     const state = initialState();
     expect(state.phase).toBe("idle");
@@ -62,7 +62,7 @@ describe("spike: connection phases", () => {
   });
 });
 
-describe("spike: peer registry", () => {
+describe("peer registry", () => {
   it("ignores a duplicate peer-join instead of listing a peer twice", () => {
     const state = run([
       joined(),
@@ -94,7 +94,7 @@ describe("spike: peer registry", () => {
   });
 });
 
-describe("spike: connect latency", () => {
+describe("connect latency", () => {
   it("measures from join to the first peer", () => {
     const state = run([
       joined(1_000),
@@ -113,28 +113,7 @@ describe("spike: connect latency", () => {
   });
 });
 
-describe("spike: the one synced action", () => {
-  it("takes the highest counter seen and records who sent it", () => {
-    const state = run([
-      joined(),
-      { type: "nudge", from: "them", counter: 3 },
-      { type: "nudge", from: "me", counter: 4 },
-    ]);
-    expect(state.counter).toBe(4);
-    expect(state.lastNudgeBy).toBe("me");
-  });
-
-  it("does not go backwards when a stale counter arrives out of order", () => {
-    const state = run([
-      joined(),
-      { type: "nudge", from: "them", counter: 7 },
-      { type: "nudge", from: "them", counter: 2 },
-    ]);
-    expect(state.counter).toBe(7);
-  });
-});
-
-describe("spike: failure is recorded with a reason", () => {
+describe("failure is recorded with a reason", () => {
   it("keeps the reason and detail so the UI can say what broke", () => {
     const state = run([
       joined(),
@@ -157,7 +136,7 @@ describe("spike: failure is recorded with a reason", () => {
   });
 });
 
-describe("spike: room codes", () => {
+describe("room codes", () => {
   // Injected RNG: the reason makeRoomCode takes `rand` instead of calling
   // Math.random itself is so this assertion can exist at all.
   it("builds a fixed-length code from the injected RNG", () => {
