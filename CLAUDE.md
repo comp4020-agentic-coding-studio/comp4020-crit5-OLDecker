@@ -248,3 +248,28 @@ behind. `spec/README.md` draws the line.
   looking after the outcome is decided. When a quantity feeds a visual and that
   quantity has a terminal value, look at what the visual does once it gets
   there.
+- **A message handler that ignores its sender id fails silently and looks
+  fine.** trystero delivers every peer's messages to the same `onMessage`, with
+  the sender in the second argument; drop it and N senders fold into one stream.
+  Here that stream was a position trail, so the interpolator did what it was
+  built to do and interpolated *between two different people* — one rival boat
+  swinging across the river at the combined send rate. Nothing throws, nothing
+  warns, the maths succeeds: it just draws the wrong boat. Two-up it is correct,
+  so it survives every test you would think to write, and the third player is
+  what a crit pod trivially produces by all opening the same shared link. The
+  regression test has to assert **two distinct poses**, not "a pose"; and the
+  same argument applies to the join/leave handlers, which were resetting every
+  peer's state on any one peer's arrival.
+- **Two Claude sessions in one working tree will clobber each other, and git
+  gives you no warning at all.** Noticed here only because `pnpm typecheck`
+  suddenly failed inside `river.ts` — a file this session had never opened —
+  with an error about a type member another session was halfway through adding.
+  `git status` shows the union of both sessions' edits as one indistinguishable
+  set of modified files, so a `git stash`, `git restore` or `git checkout` by
+  either one silently destroys the other's uncommitted work, and a `git commit
+  -a` ships a half-finished feature nobody reviewed. `ListAgents` lists the peer
+  sessions and `SendMessage` reaches them: check file mtimes against your own
+  edits when something you did not touch breaks, agree who owns which files, and
+  verify your own changes in a throwaway `git worktree` at HEAD with your files
+  copied in, which is the only way to get a clean signal while someone else is
+  typing into the same directory.

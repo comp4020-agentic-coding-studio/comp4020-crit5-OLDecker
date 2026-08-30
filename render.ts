@@ -72,12 +72,17 @@ export type Ending = {
   outcome: "won" | "lost" | "tied";
   /** Milliseconds since the finish, for the lantern rise. */
   ageMs: number;
+  /** Your place in the field, 1-based. */
+  place: number;
+  /** How many boats have finished, yours included. One lantern each. */
+  field: number;
 };
 
 export type Scene = {
   river: River;
   race: Race;
-  rival: Rival | null;
+  /** Everyone else on the water: the pacer, or one entry per connected peer. */
+  rivals: Rival[];
   /** Smoothed camera, so the frame doesn't twitch with every stroke. */
   cameraX: number;
   /** Wall clock, for water and sky motion that runs whether or not the race does. */
@@ -613,7 +618,13 @@ function hintChevrons(
   ctx.restore();
 }
 
-/** Both lanterns going up, however the race went. */
+/**
+ * A lantern per boat that has arrived, going up in the order they arrived --
+ * however the race went, and however many were in it. Yours is always the
+ * rightmost, so which one to watch never moves; the rest fill in to the left.
+ * A boat still on the water has no lantern yet, which is what "At the bend"
+ * means on the panel.
+ */
 function lanterns(
   ctx: CanvasRenderingContext2D,
   view: View,
@@ -626,16 +637,22 @@ function lanterns(
   ctx.fillStyle = `rgba(10, 12, 26, ${0.35 * Math.min(1, ending.ageMs / 900)})`;
   ctx.fillRect(0, 0, view.w, view.h);
 
-  const pairs: [number, number][] =
-    ending.outcome === "lost"
-      ? [
-          [-0.16, 0],
-          [0.16, 0.22],
-        ]
-      : [
-          [-0.16, 0.22],
-          [0.16, 0],
-        ];
+  // Two-up this is exactly the pair it always was: offsets -0.16 and +0.16,
+  // the winner's rising first and the other 0.22 behind. Wider fields keep the
+  // same outer span and pack inward rather than running off the frame.
+  const field = Math.max(1, ending.field);
+  const spread = field > 1 ? Math.min(0.32, 0.64 / (field - 1)) : 0;
+  const rank = (place: number): number =>
+    field > 1 ? ((place - 1) / (field - 1)) * 0.22 : 0;
+
+  // Every place except yours, in arrival order, filling the slots left of you.
+  const others = Array.from({ length: field }, (_, i) => i + 1).filter(
+    (place) => place !== ending.place,
+  );
+  const pairs: [number, number][] = Array.from({ length: field }, (_, i) => [
+    (i - (field - 1) / 2) * spread,
+    rank(i === field - 1 ? ending.place : (others[i] ?? i + 1)),
+  ]);
 
   for (const [offset, delay] of pairs) {
     const local = Math.max(0, Math.min(1, (t - delay) / (1 - delay)));
@@ -751,9 +768,7 @@ export function draw(
   reeds(ctx, view);
 
   const { boat } = scene.race;
-  const rival = scene.rival;
-  const drawRival = (): void => {
-    if (!rival) return;
+  const drawRival = (rival: Rival): void => {
     drawBoat(
       ctx,
       view,
@@ -768,11 +783,14 @@ export function draw(
     );
   };
 
-  // Depth order: whichever boat is further upstream is painted first, so a rock
-  // between the two of them occludes the far boat rather than the near one.
-  if (rival && rival.y > boat.y) drawRival();
+  // Depth order: the further upstream a boat is, the earlier it is painted, so
+  // a rock between two of them occludes the far one rather than the near one.
+  // The player sits in the middle of that order, which is why the rivals are
+  // split around the rocks rather than drawn in one pass.
+  const byDepth = [...scene.rivals].sort((a, b) => b.y - a.y);
+  for (const rival of byDepth) if (rival.y > boat.y) drawRival(rival);
   rocks(ctx, view, scene.river);
-  if (!rival || rival.y <= boat.y) drawRival();
+  for (const rival of byDepth) if (rival.y <= boat.y) drawRival(rival);
 
   hintChevrons(ctx, view, scene.race, scene.hint, scene.timeMs);
   stroke(ctx, view, scene.race, scene.stroke, scene.timeMs);

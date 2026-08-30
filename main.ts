@@ -188,11 +188,15 @@ window.addEventListener("blur", () => {
 // Presentation
 // ---------------------------------------------------------------------------
 
-const VERDICTS: Record<Ending["outcome"], string> = {
-  won: "First to the bend",
-  lost: "Second to the bend",
-  tied: "Together at the bend",
-};
+/** Your place in the field, spelled out. Two-up this reads exactly as it always
+ *  did -- first or second -- and simply keeps counting past that. */
+const PLACES = ["First", "Second", "Third", "Fourth", "Fifth"];
+
+function placed(place: number): string {
+  return `${PLACES[place - 1] ?? `${place}th`} to the bend`;
+}
+
+const TOGETHER = "Together at the bend";
 
 /** A real rival still on the water. Their lantern hasn't gone up yet. */
 const STILL_OUT = "At the bend";
@@ -213,14 +217,30 @@ function showResult(): void {
   const at = ending;
   if (selfMs === null || !at) return;
 
-  const rivalMs = net.live ? net.rivalFinishMs : pacerTargetMs(race.startY);
+  // Against the pacer there is exactly one time to beat; against people there
+  // are as many as have finished, and the fastest of them is the one the
+  // lantern turns on -- they either beat you or they did not.
+  const rivalTimes = net.live
+    ? net.rivalFinishTimes
+    : [pacerTargetMs(race.startY)];
+  const rivalMs = net.live ? net.rivalFinishMs : rivalTimes[0];
+
+  const field = 1 + rivalTimes.length;
+  const place = 1 + rivalTimes.filter((ms) => ms < selfMs).length;
+
   if (rivalMs === null) {
     verdict.textContent = STILL_OUT;
     times.textContent = seconds(selfMs);
+    // field === 1: yours is the only lantern up, which is what the panel says.
+    ending = { ...at, place, field };
   } else {
-    ending = { ...at, outcome: outcome(selfMs, rivalMs) };
-    verdict.textContent = VERDICTS[outcome(selfMs, rivalMs)];
-    times.textContent = `${seconds(selfMs)} · ${seconds(rivalMs)}`;
+    // Not named `result`: that is the panel element this function unhides.
+    const standing = outcome(selfMs, rivalMs);
+    ending = { ...at, outcome: standing, place, field };
+    verdict.textContent = standing === "tied" ? TOGETHER : placed(place);
+    // Yours first, always, then the rest quickest first: sorting the whole row
+    // would read as a leaderboard with no way to tell which line is you.
+    times.textContent = [selfMs, ...rivalTimes].map(seconds).join(" · ");
   }
   result.hidden = false;
   invite.classList.remove("dim");
@@ -230,7 +250,7 @@ function finish(selfMs: number): void {
   selfFinishMs = selfMs;
   finishedAt = performance.now();
   // Both lanterns rise together until there is a reason for one to go first.
-  ending = { outcome: "tied", ageMs: 0 };
+  ending = { outcome: "tied", ageMs: 0, place: 1, field: 1 };
   showResult();
 }
 
@@ -314,12 +334,14 @@ function frame(now: number): void {
     now,
   );
 
-  // A real person displaces the pacer the moment one of their snapshots lands.
-  const peer = net.poseAt(now);
+  // Real people displace the pacer the moment their snapshots land -- all of
+  // them, however many are in the room. The pacer only paces an empty river.
+  const peers = net.posesAt(now);
   const pacer = pacerPose(race.elapsedMs, race.startY);
-  const rival: Rival = peer
-    ? { x: peer.x, y: peer.y, lean: peer.lean, ghost: false }
-    : { x: pacer.x, y: pacer.y, lean: 0, ghost: true };
+  const rivals: Rival[] =
+    peers.length > 0
+      ? peers.map((p) => ({ x: p.x, y: p.y, lean: p.lean, ghost: false }))
+      : [{ x: pacer.x, y: pacer.y, lean: 0, ghost: true }];
 
   const hint =
     firstRace && !race.started
@@ -341,7 +363,7 @@ function frame(now: number): void {
   draw(surface, box.width, box.height, {
     river,
     race,
-    rival,
+    rivals,
     cameraX,
     timeMs: now,
     hint,
