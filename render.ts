@@ -19,8 +19,16 @@ import { COURSE_LENGTH, centreAt, flowAt, halfWidthAt } from "./river.ts";
 /** How far downstream the player can see, in world units. */
 const VIEW_DEPTH = 34;
 
+/**
+ * How far upstream of the boat the world keeps being painted. Without it the
+ * river stops in a hard horizontal line at the boat's own waterline and the
+ * boat reads as sitting on the lip of a waterfall. Must stay well under FOCAL:
+ * the projection's scale factor blows up at a depth of exactly -FOCAL.
+ */
+const BEHIND = 4.5;
+
 /** Perspective strength: distance at which everything is half size. */
-const FOCAL = 14;
+const FOCAL = 10;
 
 /** Where the boat sits on screen, as a fraction of height. */
 const BOAT_SCREEN_Y = 0.79;
@@ -40,7 +48,13 @@ const SKY_LOW = "#c9764a";
 const HILLS_FAR = "#332f52";
 const HILLS_NEAR = "#262845";
 const TREELINE = "#1b1e33";
-const MEADOW = "#20272e";
+const MEADOW_FAR = "#2e3444";
+const MEADOW = "#232a2f";
+const MEADOW_NEAR = "#161b1f";
+const GRASS = "58, 74, 47";
+
+/** How far the grass bank sticks out past the water, in world units. */
+const BANK_SPREAD = 0.52;
 const BANK = "#2c3527";
 const WATER_FAR = "#3d4a6b";
 const WATER_NEAR = "#16203a";
@@ -91,7 +105,7 @@ function project(
   x: number,
   y: number,
 ): { sx: number; sy: number; k: number } {
-  const d = Math.max(0, y - view.boatY);
+  const d = Math.max(-BEHIND, y - view.boatY);
   const k = FOCAL / (FOCAL + d);
   return {
     sx: view.w / 2 + (x - view.cameraX) * view.scale * k,
@@ -183,8 +197,65 @@ function land(ctx: CanvasRenderingContext2D, view: View): void {
   ridge(ctx, view, HILLS_NEAR, view.h * 0.055, 260, sway * 0.13, 2.1);
   ridge(ctx, view, TREELINE, view.h * 0.032, 90, sway * 0.28, 5.3);
 
-  ctx.fillStyle = MEADOW;
+  meadow(ctx, view);
+}
+
+/**
+ * The ground the river runs through. A flat fill reads as a void with a river
+ * floating in it, so the depth has to come from somewhere: a vertical gradient
+ * for the recession, and grass scattered on a *world* grid rather than a screen
+ * one, so it streams past the boat and parallaxes with the camera instead of
+ * sliding around with the viewport.
+ */
+function meadow(ctx: CanvasRenderingContext2D, view: View): void {
+  const grad = ctx.createLinearGradient(0, view.horizon, 0, view.h);
+  // Start on the treeline's own colour, or its flat base rules a hard line
+  // across the full width at exactly the horizon.
+  grad.addColorStop(0, TREELINE);
+  grad.addColorStop(0.07, MEADOW_FAR);
+  grad.addColorStop(0.34, MEADOW);
+  grad.addColorStop(1, MEADOW_NEAR);
+  ctx.fillStyle = grad;
   ctx.fillRect(0, view.horizon, view.w, view.h - view.horizon);
+
+  const SPACING = 1.15;
+  const first = Math.floor((view.boatY - BEHIND) / SPACING);
+  const last = Math.ceil((view.boatY + VIEW_DEPTH) / SPACING);
+
+  ctx.save();
+  ctx.lineCap = "round";
+  for (let row = first; row <= last; row += 1) {
+    const y = row * SPACING;
+    const p = project(view, view.cameraX, y);
+    if (p.sy < view.horizon || p.sy > view.h + 40) continue;
+    // World units the screen spans at this depth. A wide viewport widens this
+    // and nothing else, which is exactly the fairness property we want.
+    const span = view.w / (view.scale * p.k);
+    const centre = centreAt(y);
+    const hw = halfWidthAt(y);
+    for (let j = 0; j < 9; j += 1) {
+      const x = view.cameraX + (noise(row * 149 + j * 733) - 0.5) * span;
+      // Anything in the channel is about to be painted over by the water.
+      if (Math.abs(x - centre) < hw + 0.25) continue;
+      const q = project(view, x, y);
+      const shade = noise(row * 31 + j * 17);
+      const height = (7 + shade * 14) * q.k;
+      if (height < 1) continue;
+      const lean = (shade - 0.5) * height * 0.8;
+      ctx.strokeStyle = `rgba(${GRASS}, ${0.14 + 0.32 * Math.min(1, q.k)})`;
+      ctx.lineWidth = Math.max(0.5, 1.5 * q.k);
+      ctx.beginPath();
+      ctx.moveTo(q.sx, q.sy);
+      ctx.quadraticCurveTo(
+        q.sx + lean * 0.3,
+        q.sy - height * 0.6,
+        q.sx + lean,
+        q.sy - height,
+      );
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 
 /** The list of cross-sections the water and its banks are both built from. */
@@ -196,12 +267,16 @@ function sections(view: View): {
   sy: number;
 }[] {
   const out = [];
-  const steps = 46;
-  for (let i = steps; i >= 0; i -= 1) {
-    // Sample in even steps of *screen* depth, not world depth, so the far end
-    // of the ribbon doesn't turn into visible facets.
-    const t = i / steps;
-    const y = view.boatY + VIEW_DEPTH * t * t;
+  const steps = 52;
+  const kFar = FOCAL / (FOCAL + VIEW_DEPTH);
+  const kNear = FOCAL / (FOCAL - BEHIND);
+  for (let i = 0; i <= steps; i += 1) {
+    // Step in even slices of *screen* depth, not world depth: stepping the
+    // world evenly facets the far end of the ribbon while spending most of the
+    // samples on the near end, where they buy nothing. Far end first, so the
+    // ribbon path runs far -> near down one bank and back up the other.
+    const k = kFar + (kNear - kFar) * (i / steps);
+    const y = view.boatY + FOCAL / k - FOCAL;
     const centre = centreAt(y);
     const hw = halfWidthAt(y);
     const l = project(view, centre - hw, y);
@@ -235,7 +310,7 @@ function water(
   view: View,
   cuts: ReturnType<typeof sections>,
 ): void {
-  ribbon(ctx, cuts, 26 * view.scale * 0.02);
+  ribbon(ctx, cuts, BANK_SPREAD * view.scale);
   ctx.fillStyle = BANK;
   ctx.fill();
 
@@ -260,6 +335,36 @@ function water(
 }
 
 /**
+ * Distance haze. The ribbon can only be drawn so far before the projection
+ * squashes it to nothing, and it stops short of the horizon with a hard
+ * horizontal edge; fading the last stretch into the field turns that artefact
+ * into the river simply going out of sight.
+ *
+ * Clipped to the banks, not painted across the frame: unclipped it lightens the
+ * whole upper meadow into a flat grey fog band, which is a worse artefact than
+ * the one it set out to hide.
+ */
+function haze(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  cuts: ReturnType<typeof sections>,
+): void {
+  const far =
+    view.horizon + (view.baseY - view.horizon) * (FOCAL / (FOCAL + VIEW_DEPTH));
+  const fade = far + (far - view.horizon) * 1.6;
+  ctx.save();
+  ribbon(ctx, cuts, BANK_SPREAD * view.scale);
+  ctx.clip();
+  const grad = ctx.createLinearGradient(0, view.horizon, 0, fade);
+  grad.addColorStop(0, MEADOW_FAR);
+  grad.addColorStop(0.45, "rgba(52, 58, 76, 0.62)");
+  grad.addColorStop(1, "rgba(52, 58, 76, 0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, view.horizon, view.w, fade - view.horizon);
+  ctx.restore();
+}
+
+/**
  * Foam streaks, longer and brighter where the water runs fast. Nothing tells
  * the player the channel exists; this is how they find it.
  */
@@ -271,7 +376,7 @@ function ripples(
 ): void {
   const SPACING = 1.6;
   const drift = ((timeMs * 0.0022) % SPACING) + SPACING;
-  const first = Math.floor((view.boatY - SPACING) / SPACING);
+  const first = Math.floor((view.boatY - BEHIND - SPACING) / SPACING);
   const last = Math.ceil((view.boatY + VIEW_DEPTH) / SPACING);
 
   ctx.save();
@@ -281,7 +386,7 @@ function ripples(
 
   for (let row = first; row <= last; row += 1) {
     const y = row * SPACING + drift;
-    if (y < view.boatY - 1 || y > view.boatY + VIEW_DEPTH) continue;
+    if (y < view.boatY - BEHIND || y > view.boatY + VIEW_DEPTH) continue;
     const centre = centreAt(y);
     const hw = halfWidthAt(y);
     for (let j = 0; j < 3; j += 1) {
@@ -303,15 +408,21 @@ function ripples(
 }
 
 function reeds(ctx: CanvasRenderingContext2D, view: View): void {
+  // World rows, not offsets from the boat: reeds pinned to the boat's own depth
+  // never approach it, which quietly cancels the depth cue they exist to give.
+  const SPACING = 0.85;
+  const first = Math.floor((view.boatY - BEHIND) / SPACING);
+  const last = Math.ceil((view.boatY + VIEW_DEPTH) / SPACING);
   ctx.strokeStyle = "#1a2418";
-  for (let i = 0; i < 60; i += 1) {
-    const y = view.boatY + 1 + noise(i * 13) * (VIEW_DEPTH - 2);
-    const side = i % 2 === 0 ? -1 : 1;
+  for (let row = first; row <= last; row += 1) {
+    if (noise(row * 61) > 0.62) continue;
+    const y = row * SPACING;
+    const side = noise(row * 97) > 0.5 ? 1 : -1;
     const centre = centreAt(y);
     const hw = halfWidthAt(y);
-    const base = project(view, centre + side * (hw + 0.06 + noise(i * 7) * 0.5), y);
-    if (base.sy > view.h || base.k < 0.12) continue;
-    const height = (18 + noise(i * 5) * 26) * base.k;
+    const base = project(view, centre + side * (hw + 0.05 + noise(row * 7) * 0.45), y);
+    if (base.sy > view.h + 60 || base.k < 0.12) continue;
+    const height = (16 + noise(row * 5) * 26) * base.k;
     ctx.lineWidth = Math.max(0.5, 1.8 * base.k);
     ctx.beginPath();
     ctx.moveTo(base.sx, base.sy);
@@ -327,7 +438,7 @@ function reeds(ctx: CanvasRenderingContext2D, view: View): void {
 
 function rocks(ctx: CanvasRenderingContext2D, view: View, river: River): void {
   for (const rock of river.rocks) {
-    if (rock.y < view.boatY - 1 || rock.y > view.boatY + VIEW_DEPTH) continue;
+    if (rock.y < view.boatY - BEHIND || rock.y > view.boatY + VIEW_DEPTH) continue;
     const p = project(view, rock.x, rock.y);
     const rx = rock.r * view.scale * p.k;
     const ry = rx * 0.62;
@@ -554,7 +665,28 @@ function lanterns(
   ctx.restore();
 }
 
-export /**
+/**
+ * Draws the eye down the river on a wide viewport, where the meadow otherwise
+ * takes up most of the frame.
+ */
+function vignette(ctx: CanvasRenderingContext2D, view: View): void {
+  const cx = view.w / 2;
+  const cy = view.baseY * 0.78;
+  const grad = ctx.createRadialGradient(
+    cx,
+    cy,
+    view.h * 0.3,
+    cx,
+    cy,
+    Math.max(view.w, view.h) * 0.78,
+  );
+  grad.addColorStop(0, "rgba(8, 9, 18, 0)");
+  grad.addColorStop(1, "rgba(8, 9, 18, 0.34)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, view.w, view.h);
+}
+
+/**
  * The bend where the lanterns go up, glowing on the horizon and brightening as
  * you close on it. This is the game's entire progress indicator: a HUD would be
  * a second thing to read, and there is nothing to read here on purpose.
@@ -600,6 +732,7 @@ export function draw(
   const cuts = sections(view);
   water(ctx, view, cuts);
   ripples(ctx, view, cuts, scene.timeMs);
+  haze(ctx, view, cuts);
   finishGlow(ctx, view);
   reeds(ctx, view);
 
@@ -631,5 +764,6 @@ export function draw(
     scene.stroke === 0 ? 0.35 : 1,
   );
 
+  vignette(ctx, view);
   if (scene.ending) lanterns(ctx, view, scene.ending);
 }

@@ -3,17 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>COMP4020 prototype</title>
+    <title>Lantern Regatta</title>
     <meta
       name="description"
-      content="Replace this with one sentence saying what this page is. A search result and a link preview both show it."
+      content="A paper boat race down a river at dusk. Hold a side to paddle that side, find the fast water, and get to the bend before the other boat — both lanterns go up either way."
     />
 
-    <!--
-      The link-preview card: public/card.png, 1200x630 --- replace it. The URL
-      resolves against this page, like any link. No og:title/og:description:
-      scrapers fall back to the <title> and description above.
-    -->
     <meta property="og:type" content="website" />
     <meta property="og:image" content="./card.png" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -23,16 +18,32 @@
   <body>
     <header>
       <nav aria-label="Primary">
-        <a href="./">Home</a>
+        <a href="./" aria-label="Lantern Regatta, back to the start">&#8634;</a>
       </nav>
     </header>
+
     <main>
-      <h1>COMP4020 prototype</h1>
-      <p>
-        Replace this with your prototype. This week's brief is on the course website;
-        <code>spec/README.md</code> explains how the checks in this repo relate to it.
-      </p>
+      <h1 id="title">Lantern Regatta</h1>
+
+      <canvas
+        id="river"
+        tabindex="0"
+        aria-label="A paper boat drifting down a river at dusk"
+      ></canvas>
+
+      <div id="result" class="result" hidden>
+        <p id="verdict" class="verdict"></p>
+        <p id="times" class="times"></p>
+        <button id="again" type="button" aria-label="Another race">&#8635;</button>
+      </div>
     </main>
+
+    <aside id="invite" class="invite">
+      <button id="share" type="button" aria-label="Copy a link that puts a friend in this boat race">
+        <span id="share-face" aria-hidden="true">&#128279;</span>
+      </button>
+    </aside>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

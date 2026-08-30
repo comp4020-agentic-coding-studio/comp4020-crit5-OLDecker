@@ -1,16 +1,225 @@
+/* Full-bleed canvas with a handful of overlays. Every rule here is in service
+   of one constraint: nothing on this page may explain the game. What is left is
+   a title that gets out of the way, an outcome, and a link to share. */
+
+:root {
+  --paper: #f6ecd8;
+  --ember: #ffb765;
+  --ink: #0d1020;
+
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
 body {
+  height: 100%;
   margin: 0;
-  padding: 2rem;
-  font-family: system-ui, sans-serif;
-  line-height: 1.6;
-  color: #1a1a1a;
+  overflow: hidden;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+
+  /* A click-drag over the canvas must not start a native text selection or
+     drag gesture -- it silently swallows the pointermove stream the paddle
+     depends on. */
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 main {
-  max-width: 40rem;
-  margin: 0 auto;
+  position: fixed;
+  inset: 0;
 }
 
-a {
-  color: #0b5fff;
+#river {
+  display: block;
+  width: 100%;
+  height: 100%;
+
+  /* Without this a touch-drag scrolls or zooms the page instead of paddling. */
+  touch-action: none;
+  outline: none;
+}
+
+#river:focus-visible {
+  outline: 2px solid rgb(255 183 101 / 60%);
+  outline-offset: -4px;
+}
+
+/* The title is the only thing on the opening screen, and it leaves the moment
+   the player does anything -- an empty river is the affordance, not a caption. */
+#title {
+  position: absolute;
+  top: 11%;
+  left: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0 1rem;
+  font-size: clamp(1.9rem, 6vw, 3.6rem);
+  font-weight: 400;
+  font-style: italic;
+  letter-spacing: 0.06em;
+  text-align: center;
+  color: rgb(246 236 216 / 90%);
+  text-shadow: 0 0 28px rgb(13 16 32 / 80%);
+  pointer-events: none;
+  transition:
+    opacity 900ms ease,
+    transform 900ms ease;
+}
+
+#title.away {
+  opacity: 0;
+  transform: translateY(-0.6rem);
+}
+
+header nav {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.9rem;
+  z-index: 3;
+}
+
+header nav a {
+  display: block;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 50%;
+  font-size: 1.1rem;
+  line-height: 2rem;
+  text-align: center;
+  text-decoration: none;
+  color: rgb(246 236 216 / 45%);
+  transition: color 200ms ease;
+}
+
+header nav a:hover,
+header nav a:focus-visible {
+  color: rgb(255 183 101 / 95%);
+}
+
+.invite {
+  position: fixed;
+  right: 0.9rem;
+  bottom: 0.9rem;
+  z-index: 3;
+  transition: opacity 500ms ease;
+}
+
+.invite[hidden] {
+  display: none;
+}
+
+.invite.dim {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.invite button {
+  width: 2.9rem;
+  height: 2.9rem;
+  padding: 0;
+  border: 1px solid rgb(246 236 216 / 18%);
+  border-radius: 50%;
+  background: rgb(13 16 32 / 55%);
+  font-size: 1.15rem;
+  color: var(--paper);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition:
+    border-color 200ms ease,
+    transform 200ms ease;
+}
+
+.result button {
+  width: 3.2rem;
+  height: 3.2rem;
+  margin-top: 0.9rem;
+  padding: 0;
+  border: 1px solid rgb(255 183 101 / 45%);
+  border-radius: 50%;
+  background: rgb(13 16 32 / 55%);
+  font-size: 1.4rem;
+  color: rgb(255 214 158 / 95%);
+  cursor: pointer;
+  transition:
+    border-color 200ms ease,
+    transform 200ms ease;
+}
+
+.result button:hover,
+.result button:focus-visible {
+  border-color: rgb(255 183 101 / 95%);
+  transform: rotate(-40deg);
+}
+
+.invite button:hover,
+.invite button:focus-visible {
+  border-color: rgb(255 183 101 / 70%);
+  transform: translateY(-2px);
+}
+
+.invite.copied button {
+  border-color: rgb(255 183 101 / 90%);
+}
+
+.result {
+  position: absolute;
+  inset: auto 0 12%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0 1rem;
+  text-align: center;
+  animation: rise 1200ms ease both;
+}
+
+/* An author rule with the same specificity as the UA's `[hidden]` cancels it,
+   and the author sheet always wins on source order -- so say it explicitly. */
+.result[hidden] {
+  display: none;
+}
+
+.verdict {
+  margin: 0;
+  font-size: clamp(1.4rem, 4.5vw, 2.2rem);
+  font-style: italic;
+  letter-spacing: 0.04em;
+  color: rgb(255 214 158 / 95%);
+  text-shadow: 0 0 24px rgb(13 16 32 / 90%);
+}
+
+.times {
+  margin: 0;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+  color: rgb(246 236 216 / 55%);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(1.2rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .result {
+    animation: none;
+  }
+
+  #title {
+    transition: none;
+  }
 }
