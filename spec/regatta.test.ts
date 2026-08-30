@@ -12,7 +12,7 @@ import {
   step,
 } from "../regatta.ts";
 import type { River } from "../river.ts";
-import { COURSE_LENGTH, ROCK_RADIUS, centreAt, halfWidthAt } from "../river.ts";
+import { COURSE_LENGTH, LOG_RADIUS, ROCK_RADIUS, centreAt, halfWidthAt } from "../river.ts";
 
 // The rule this week's spec asks to be covered by a focused test is the one the
 // whole race turns on: hitting a rock capsizes you, and a capsize costs you the
@@ -23,7 +23,7 @@ import { COURSE_LENGTH, ROCK_RADIUS, centreAt, halfWidthAt } from "../river.ts";
 const STEP_MS = 20;
 const PADDLE_ON: Input = { paddling: true, steer: 0 };
 
-const EMPTY: River = { seed: 0, rocks: [] };
+const EMPTY: River = { seed: 0, rocks: [], logs: [] };
 
 /**
  * A single rock on the exact line a boat holds when it paddles straight from
@@ -32,7 +32,17 @@ const EMPTY: River = { seed: 0, rocks: [] };
  * not about the rule being tested.
  */
 function riverWithRockAt(y: number): River {
-  return { seed: 0, rocks: [{ x: centreAt(0), y, r: ROCK_RADIUS }] };
+  return { seed: 0, rocks: [{ x: centreAt(0), y, r: ROCK_RADIUS }], logs: [] };
+}
+
+/** Same idea as `riverWithRockAt`, but a log spanning the boat's straight-line
+ *  column instead of a point. */
+function riverWithLogAt(y: number): River {
+  return {
+    seed: 0,
+    rocks: [],
+    logs: [{ x: centreAt(0), y, half: 0.3, r: LOG_RADIUS }],
+  };
 }
 
 function run(river: River, race: Race, ms: number, input: Input): Race {
@@ -63,6 +73,21 @@ describe("the rule: a rock capsizes the boat", () => {
     const hit = run(riverWithRockAt(12), initialRace(), 3000, PADDLE_ON);
 
     expect(hit.boat.y).toBeLessThan(clean.boat.y);
+  });
+});
+
+describe("the rule: a log capsizes the boat too", () => {
+  it("capsizes a boat that paddles into a log", () => {
+    const river = riverWithLogAt(12);
+    const after = run(river, initialRace(), 3000, PADDLE_ON);
+
+    expect(after.boat.capsizes).toBe(1);
+  });
+
+  it("leaves the same boat upright on open water", () => {
+    const after = run(EMPTY, initialRace(), 3000, PADDLE_ON);
+
+    expect(after.boat.capsizes).toBe(0);
   });
 });
 

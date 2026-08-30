@@ -7,6 +7,10 @@
   --ember: #ffb765;
   --ink: #0d1020;
 
+  /* What shows for the frame or two before WebGL paints. Matching the scene's
+     fog colour opens the page on sky instead of flashing black. */
+  --haze: #c3e4f2;
+
   color-scheme: dark;
 }
 
@@ -19,7 +23,7 @@ body {
   height: 100%;
   margin: 0;
   overflow: hidden;
-  background: var(--ink);
+  background: var(--haze);
   color: var(--paper);
   font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
 
@@ -28,6 +32,12 @@ body {
      depends on. */
   user-select: none;
   -webkit-user-drag: none;
+
+  /* iOS ignores user-select: none for its own long-press callout (the
+     Copy / Find Selection / Look Up menu) -- this is the property that
+     actually suppresses it. Without it a long paddle-hold on a phone pops
+     the system menu over the canvas mid-race. */
+  -webkit-touch-callout: none;
 }
 
 main {
@@ -48,6 +58,18 @@ main {
 #river:focus-visible {
   outline: 2px solid rgb(255 183 101 / 60%);
   outline-offset: -4px;
+}
+
+/* Draws the eye down the river on a wide viewport, where a flat 3D ground
+   plane otherwise takes up most of the frame. Decoupled from the 3D scene on
+   purpose: this used to be a per-frame canvas draw in render.ts, now it is a
+   static overlay the renderer never has to know about. */
+#vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse at 50% 62%, rgb(10 40 70 / 0%) 45%, rgb(10 40 70 / 17%) 100%);
+  z-index: 1;
 }
 
 /* The title is the only thing on the opening screen, and it leaves the moment

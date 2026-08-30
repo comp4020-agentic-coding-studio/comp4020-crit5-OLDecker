@@ -100,6 +100,20 @@ export function touchesRock(river: River, x: number, y: number): boolean {
   return false;
 }
 
+/** Same shape as `touchesRock`, but against the nearest point on the log's
+ *  span instead of a single centre -- a log is a rock stretched sideways. */
+export function touchesLog(river: River, x: number, y: number): boolean {
+  for (const log of river.logs) {
+    const reach = log.r + BOAT_RADIUS;
+    if (Math.abs(log.y - y) > reach) continue;
+    const nearestX = clamp(x, log.x - log.half, log.x + log.half);
+    const dx = nearestX - x;
+    const dy = log.y - y;
+    if (dx * dx + dy * dy < reach * reach) return true;
+  }
+  return false;
+}
+
 /**
  * Advance the race by `dtMs`. Input is ignored entirely while capsized -- that
  * lost control, not the lost seconds, is what makes a rock feel like a mistake
@@ -148,7 +162,7 @@ export function step(
       x = centre + Math.sign(x - centre) * bank;
       capsizeMs = CAPSIZE_MS;
       capsizes += 1;
-    } else if (touchesRock(river, x, y)) {
+    } else if (touchesRock(river, x, y) || touchesLog(river, x, y)) {
       capsizeMs = CAPSIZE_MS;
       capsizes += 1;
     }

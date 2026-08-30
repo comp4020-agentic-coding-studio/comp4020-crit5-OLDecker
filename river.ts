@@ -34,6 +34,17 @@ export const ROCK_RADIUS = 0.17;
 /** Half-width of the gap left between the two rocks of a gate, relative. */
 const GATE_HALF = 0.32;
 
+/** A fallen log's trunk thickness -- the collision reach in the flow direction. */
+export const LOG_RADIUS = 0.16;
+
+/**
+ * Width of the passable lane a log station leaves at one bank, relative to the
+ * channel's half-width. A log doesn't get a lane down the middle like a rock
+ * gate does; it reaches out from one bank and the gap is what's left at the
+ * other, so a log reads as "go around the end" rather than "thread the middle".
+ */
+const LOG_GAP = 0.64;
+
 const MIN_GAP = 11;
 const MAX_GAP = 20;
 
@@ -44,7 +55,9 @@ const FLOW_MIN = 0.5;
 const FLOW_SPREAD = 1.15;
 
 export type Rock = { x: number; y: number; r: number };
-export type River = { seed: number; rocks: Rock[] };
+/** Spans laterally from `x - half` to `x + half` at depth `y`; `r` is trunk thickness. */
+export type Log = { x: number; y: number; half: number; r: number };
+export type River = { seed: number; rocks: Rock[]; logs: Log[] };
 
 /** Small, fast, well-distributed PRNG. Deterministic across engines. */
 export function mulberry32(seed: number): () => number {
@@ -113,14 +126,17 @@ export function flowAt(x: number, y: number): number {
 }
 
 /**
- * Rocks are laid down in stations, each either a single rock you go around or a
- * pair with a lane between them. Both shapes are built outward from a clear
- * gap, so a passable line always exists by construction rather than by luck --
- * `spec/river.test.ts` walks the whole course and holds this to it.
+ * Rocks and logs are laid down in stations, each one of: a single rock you go
+ * around, a gated pair with a lane between them, or a log reaching out from
+ * one bank with a lane left at the other. All three shapes are built outward
+ * from a clear gap, so a passable line always exists by construction rather
+ * than by luck -- `spec/river.test.ts` walks the whole course and holds this
+ * to it.
  */
 export function buildRiver(seed: number): River {
   const rand = mulberry32(seed);
   const rocks: Rock[] = [];
+  const logs: Log[] = [];
   const end = COURSE_LENGTH - RUN_OUT;
 
   let y = OPENING_CALM;
@@ -130,7 +146,8 @@ export function buildRiver(seed: number): River {
     const relRadius = ROCK_RADIUS / hw;
     const limit = 1 - relRadius - 0.02;
 
-    if (rand() < 0.45) {
+    const roll = rand();
+    if (roll < 0.3) {
       const gate = (rand() * 2 - 1) * 0.42;
       for (const side of [-1, 1]) {
         const rel = gate + side * (GATE_HALF + relRadius);
@@ -138,18 +155,35 @@ export function buildRiver(seed: number): River {
           rocks.push({ x: centre + rel * hw, y, r: ROCK_RADIUS });
         }
       }
-    } else {
+    } else if (roll < 0.65) {
       const rel = (rand() * 2 - 1) * 0.55;
       rocks.push({ x: centre + rel * hw, y, r: ROCK_RADIUS });
+    } else {
+      // Reaches out from a randomly-chosen bank, leaving LOG_GAP clear at the
+      // other -- so the log's own centre and half-length fall straight out of
+      // which bank it's anchored to, with no separate gap-position roll.
+      const logRelRadius = LOG_RADIUS / hw;
+      const outer = 1 - logRelRadius - 0.02;
+      const half = outer - LOG_GAP / 2;
+      if (half > logRelRadius) {
+        const side = rand() < 0.5 ? 1 : -1;
+        const rel = -side * (LOG_GAP / 2);
+        logs.push({ x: centre + rel * hw, y, half: half * hw, r: LOG_RADIUS });
+      }
     }
 
     y += MIN_GAP + rand() * (MAX_GAP - MIN_GAP);
   }
 
-  return { seed, rocks };
+  return { seed, rocks, logs };
 }
 
 /** The rocks whose `y` falls in `[from, to]`. The course is short; a scan is plenty. */
 export function rocksNear(river: River, from: number, to: number): Rock[] {
   return river.rocks.filter((rock) => rock.y >= from && rock.y <= to);
+}
+
+/** The logs whose `y` falls in `[from, to]`. The course is short; a scan is plenty. */
+export function logsNear(river: River, from: number, to: number): Log[] {
+  return river.logs.filter((log) => log.y >= from && log.y <= to);
 }

@@ -1,11 +1,13 @@
 // Wiring: input, the frame loop, and the handful of DOM nodes that sit over the
 // canvas. Everything with a rule in it lives in regatta.ts; everything with a
-// pixel in it lives in render.ts. This file owns the clock and the browser.
+// pixel in it lives in scene3d.ts (plus assets.ts, water.ts and paddle.ts).
+// This file owns the clock and the browser.
 
-import type { Ending, Rival } from "./render.ts";
-import { draw } from "./render.ts";
-import type { Input, Race } from "./regatta.ts";
+import type { Ending, Rival, Scene, Stroke } from "./scene3d.ts";
+import { createRenderer } from "./scene3d.ts";
+import type { Input, Race, Steer } from "./regatta.ts";
 import {
+  BOAT_RADIUS,
   IDLE,
   initialRace,
   outcome,
@@ -13,7 +15,7 @@ import {
   pacerTargetMs,
   step,
 } from "./regatta.ts";
-import { buildRiver, seedFromCode } from "./river.ts";
+import { buildRiver, centreAt, halfWidthAt, seedFromCode } from "./river.ts";
 import { makeRoomCode, roomFromHash } from "./room.ts";
 import { connectRoom } from "./net.ts";
 
@@ -54,14 +56,10 @@ if (
   throw new Error("the page is missing an element the race needs");
 }
 
-const ctx = canvas.getContext("2d");
-if (!ctx) throw new Error("no 2d context");
-
 // Aliased after the guard, not used directly: TypeScript's null-narrowing of an
 // outer const survives into arrow closures but NOT into the hoisted function
 // declarations below, which would otherwise all be TS18047.
 const view = canvas;
-const surface = ctx;
 const title = titleEl;
 const result = resultEl;
 const verdict = verdictEl;
@@ -77,6 +75,10 @@ if (roomFromHash(location.hash) !== code) {
 }
 const river = buildRiver(seedFromCode(code));
 
+// No async asset loading here -- procedural geometry builds synchronously, so
+// the renderer is ready before the first requestAnimationFrame.
+const { resize: resizeRenderer, renderScene } = createRenderer(view, river);
+
 let race: Race = initialRace();
 let cameraX = race.boat.x;
 let ending: Ending | null = null;
@@ -91,37 +93,67 @@ let selfFinishMs: number | null = null;
 const net = connectRoom(code, () => showResult());
 
 // ---------------------------------------------------------------------------
-// Input. One gesture carries propulsion and steering: hold a side to paddle on
-// that side. Holding both, or a key with no side to it, paddles straight.
+// Input. One gesture carries propulsion and steering: hold, and the boat both
+// paddles and makes for where you are holding.
+//
+// A held finger names a *place*, not a direction. The canvas maps across the
+// channel -- hold a third of the way in from the left edge and the boat goes to
+// a third of the way in from the left bank, and stays there. This replaced a
+// three-zone scheme (left of 42% meant "turn left" for as long as you held it),
+// which on a phone meant steering by dabbing: press, watch, lift before the
+// overshoot, press again. Naming a target instead makes holding still the
+// normal state, which is what a thumb on a phone is good at.
+//
+// Keys stay directional, because a key has no position to name.
 // ---------------------------------------------------------------------------
 
 const keys = { left: false, right: false, straight: false };
-const pointers = new Map<number, -1 | 0 | 1>();
 
-function readInput(): Input {
-  let left = keys.left;
-  let right = keys.right;
-  let straight = keys.straight;
-  for (const side of pointers.values()) {
-    if (side === -1) left = true;
-    else if (side === 1) right = true;
-    else straight = true;
-  }
-  if (left && right) return { paddling: true, steer: 0 };
-  if (left) return { paddling: true, steer: -1 };
-  if (right) return { paddling: true, steer: 1 };
-  if (straight) return { paddling: true, steer: 0 };
+/** Live contacts, each holding where across the canvas it sits, 0..1. */
+const pointers = new Map<number, number>();
+
+/**
+ * How far ahead of the boat to aim, as a multiplier on its heel. `lean` is a
+ * smoothed copy of recent steering, so it stands in for lateral speed; steering
+ * on present error alone overshoots the target and then hunts around it.
+ */
+const LEAD = 0.42;
+
+/** Close enough. Wide enough not to chatter, tight enough to feel aimed. */
+const ARRIVED = 0.045;
+
+function pointerSteer(race: Race): Steer {
+  let sum = 0;
+  for (const fraction of pointers.values()) sum += fraction;
+  const across = sum / pointers.size;
+
+  const y = race.boat.y;
+  // The reachable water at this point of the course: bank to bank, less the
+  // boat's own beam, so the far edges of the screen ask for the far edges of
+  // the river rather than for a capsize.
+  const usable = halfWidthAt(y) - BOAT_RADIUS;
+  const targetX = centreAt(y) + (across * 2 - 1) * usable;
+
+  const predicted = race.boat.x + race.boat.lean * LEAD;
+  const error = targetX - predicted;
+  if (Math.abs(error) < ARRIVED) return 0;
+  return error < 0 ? -1 : 1;
+}
+
+function readInput(race: Race): Input {
+  // A key is an explicit instruction and outranks a resting finger.
+  if (keys.left && keys.right) return { paddling: true, steer: 0 };
+  if (keys.left) return { paddling: true, steer: -1 };
+  if (keys.right) return { paddling: true, steer: 1 };
+  if (keys.straight) return { paddling: true, steer: 0 };
+  if (pointers.size > 0) return { paddling: true, steer: pointerSteer(race) };
   return IDLE;
 }
 
-function sideOf(clientX: number): -1 | 0 | 1 {
+function acrossOf(clientX: number): number {
   const box = view.getBoundingClientRect();
-  const rel = (clientX - box.left) / box.width;
-  // A dead band down the middle so a centre tap means "straight ahead" rather
-  // than an arbitrary lurch to whichever side of the pixel it landed on.
-  if (rel < 0.42) return -1;
-  if (rel > 0.58) return 1;
-  return 0;
+  const rel = (clientX - box.left) / Math.max(1, box.width);
+  return rel < 0 ? 0 : rel > 1 ? 1 : rel;
 }
 
 view.addEventListener("pointerdown", (event: PointerEvent) => {
@@ -129,12 +161,12 @@ view.addEventListener("pointerdown", (event: PointerEvent) => {
   // selection gesture and eats the pointer stream the paddle runs on.
   event.preventDefault();
   view.setPointerCapture(event.pointerId);
-  pointers.set(event.pointerId, sideOf(event.clientX));
+  pointers.set(event.pointerId, acrossOf(event.clientX));
 });
 
 view.addEventListener("pointermove", (event: PointerEvent) => {
   if (pointers.has(event.pointerId)) {
-    pointers.set(event.pointerId, sideOf(event.clientX));
+    pointers.set(event.pointerId, acrossOf(event.clientX));
   }
 });
 
@@ -268,12 +300,12 @@ shareEl.addEventListener("click", () => {
 // The loop
 // ---------------------------------------------------------------------------
 
+// scene3d.ts's resize() takes CSS pixel dimensions and handles the device
+// pixel ratio internally (Three.js's setPixelRatio + setSize(w, h, false)),
+// so this passes the bounding box straight through with no manual scaling.
 function resize(): void {
-  const dpr = Math.min(2, window.devicePixelRatio || 1);
   const box = view.getBoundingClientRect();
-  view.width = Math.max(1, Math.round(box.width * dpr));
-  view.height = Math.max(1, Math.round(box.height * dpr));
-  surface.setTransform(dpr, 0, 0, dpr, 0, 0);
+  resizeRenderer(Math.max(1, box.width), Math.max(1, box.height));
 }
 
 new ResizeObserver(resize).observe(view);
@@ -286,7 +318,7 @@ function frame(now: number): void {
   const elapsed = Math.min(120, now - previous);
   previous = now;
 
-  const input = readInput();
+  const input = readInput(race);
   if (!ending) {
     for (let left = elapsed; left > 0; left -= MAX_SUB_MS) {
       race = step(river, race, input, Math.min(MAX_SUB_MS, left));
@@ -326,28 +358,26 @@ function frame(now: number): void {
       ? Math.min(1, Math.max(0, (now - openedAt - HINT_AFTER_MS) / 900))
       : 0;
 
-  const strokeSide =
-    input.steer !== 0
-      ? input.steer
-      : input.paddling
-        ? Math.sin(now * 0.012) > 0
-          ? 1
-          : -1
-        : 0;
+  // The alternation itself belongs to the animation, not to this loop: hand
+  // over whether the paddle is being worked and which side is being favoured,
+  // and let paddle.ts run the cycle off its own clock. A wall-clock square wave
+  // here used to decide which blade was down, which meant the stroke had no way
+  // to keep alternating while steering -- it just held one blade out.
+  const stroke: Stroke = { active: input.paddling, side: input.steer };
 
   if (ending) ending = { ...ending, ageMs: now - finishedAt };
 
-  const box = view.getBoundingClientRect();
-  draw(surface, box.width, box.height, {
+  const frameScene: Scene = {
     river,
     race,
     rival,
     cameraX,
     timeMs: now,
     hint,
-    stroke: strokeSide,
+    stroke,
     ending,
-  });
+  };
+  renderScene(frameScene);
 
   requestAnimationFrame(frame);
 }

@@ -66,8 +66,13 @@ behind. `spec/README.md` draws the line.
   (`"$PWD/.gitignore"`) instead. Reproduces on a clean checkout; unrelated to
   any change made here.
 - No headless-browser CLI (`chromium-cli`) is installed in this environment;
-  `/private/tmp/node_modules/playwright` has a cached Playwright install that
-  works as a fallback for live-verifying pages with a Node driver script.
+  `/tmp/pw/node_modules/playwright` (1.62.1) has a cached Playwright install
+  that works for live-verifying pages with a Node driver script — import it by
+  absolute path (`/tmp/pw/node_modules/playwright/index.mjs`). This entry used
+  to name `/private/tmp/node_modules/playwright`, which does not exist; the
+  path was carried forward for weeks without anyone checking it. Launch with
+  `args: ["--enable-unsafe-swiftshader", "--use-angle=swiftshader"]` for a
+  WebGL page, or the context has no GPU and every screenshot is blank.
 - **TypeScript's `if (x)` null-narrowing on an outer `const` does not survive
   into a hoisted `function` declaration defined later in the same block** —
   only into inline arrow-function closures. `tsc --noEmit` throws `TS18047`
@@ -248,3 +253,99 @@ behind. `spec/README.md` draws the line.
   looking after the outcome is decided. When a quantity feeds a visual and that
   quantity has a terminal value, look at what the visual does once it gets
   there.
+- **A message handler that ignores its sender id fails silently and looks
+  fine.** trystero delivers every peer's messages to the same `onMessage`, with
+  the sender in the second argument; drop it and N senders fold into one stream.
+  Here that stream was a position trail, so the interpolator did what it was
+  built to do and interpolated *between two different people* — one rival boat
+  swinging across the river at the combined send rate. Nothing throws, nothing
+  warns, the maths succeeds: it just draws the wrong boat. Two-up it is correct,
+  so it survives every test you would think to write, and the third player is
+  what a crit pod trivially produces by all opening the same shared link. The
+  regression test has to assert **two distinct poses**, not "a pose"; and the
+  same argument applies to the join/leave handlers, which were resetting every
+  peer's state on any one peer's arrival.
+- **`user-select: none` does not stop iOS's own long-press callout menu**
+  (Copy / Find Selection / Look Up) from popping up over a canvas or any
+  other element on a long touch-hold. That property only blocks *selection*;
+  the callout is a separate WebKit behaviour gated by
+  `-webkit-touch-callout: none`. Reported by the user from a real phone —
+  nothing in `pnpm check` or a desktop browser would have caught it, since
+  desktop Safari/Chrome have no long-press callout to trigger. Any page with
+  a press-and-hold interaction (this game's paddle hold) needs the
+  `-webkit-touch-callout` rule alongside `user-select`, not instead of it.
+- **A `THREE.ShaderMaterial` silently opts out of `scene.fog`.** Every built-in
+  material picks the scene's fog up automatically, so a scene reads as
+  consistently hazy right until one custom-shaded object joins it — and that
+  object then renders at full saturation out to the horizon while everything
+  around it fades, which looks like a lighting bug in the *other* meshes rather
+  than a missing feature in this one. Nothing warns: `fog` just defaults to
+  `false` and the shader has no fog code to run. Wiring it up is three separate
+  edits, and missing any one fails the same silent way — merge
+  `THREE.UniformsLib.fog` into the uniforms (`UniformsUtils.merge` *clones*, so
+  keep the merged object if you need to mutate a uniform later, not the literal
+  you passed in), set `fog: true` on the material, and `#include` the four
+  chunks (`fog_pars_vertex` / `fog_vertex` / `fog_pars_fragment` /
+  `fog_fragment`). `fog_vertex` reads a variable literally named `mvPosition`,
+  so the view-space position must be bound under that name or it won't compile.
+- **Foam/streak shaders need their high frequency across the *subject*, not
+  across the world.** The river here is ~2 world units wide but 300 long, so a
+  plausible-looking `sin(x * 0.9)` varies by under 2 radians over the entire
+  width — effectively constant laterally — and what should have been fine
+  streaks came out as a few huge white washes drifting downstream: the same
+  banding complaint the shader was written to fix, in a different shape. The
+  constants look reasonable in isolation and the shader compiles and animates
+  fine. Pick frequencies against the dimension being textured (high across the
+  narrow axis, low along the long one, so streaks stretch the way a current
+  does), and note that every visual bug in this port survived a fully green
+  `pnpm check` and was caught only by screenshotting the running page — a green
+  check says nothing whatsoever about whether a 3D scene looks right.
+- **Two Claude sessions in one working tree will clobber each other, and git
+  gives you no warning at all.** Noticed here only because `pnpm typecheck`
+  suddenly failed inside `river.ts` — a file this session had never opened —
+  with an error about a type member another session was halfway through adding.
+  `git status` shows the union of both sessions' edits as one indistinguishable
+  set of modified files, so a `git stash`, `git restore` or `git checkout` by
+  either one silently destroys the other's uncommitted work, and a `git commit
+  -a` ships a half-finished feature nobody reviewed. `ListAgents` lists the peer
+  sessions and `SendMessage` reaches them: check file mtimes against your own
+  edits when something you did not touch breaks, agree who owns which files, and
+  verify your own changes in a throwaway `git worktree` at HEAD with your files
+  copied in, which is the only way to get a clean signal while someone else is
+  typing into the same directory.
+- **`IcosahedronGeometry` (and everything else built on `PolyhedronGeometry`)
+  is non-indexed, so displacing vertices *by index* tears the mesh open.** A
+  corner shared by five faces exists as five separate vertices at identical
+  coordinates; key a per-vertex displacement off `i` and those five copies get
+  five different radii, and the faces that met there stop meeting. What you see
+  is a rock with holes in it — read by a user as "the stones are hollow", not as
+  a geometry bug, because from outside it looks like a modelling choice. There
+  is no error and `computeVertexNormals()` happily normals the torn surface.
+  Hash the vertex's rounded *position* instead, so every copy of a shared corner
+  gets the same answer. Rounding is what makes that safe: the copies are
+  bit-identical here but need not be, and real vertices are ~0.3 apart, nowhere
+  near a 1/1024 grid. Keep the geometry non-indexed anyway — that is what gives
+  `computeVertexNormals()` flat per-face normals, i.e. the faceted look.
+- **A shader pattern fixed in world space is being drawn at wildly different
+  screen scales, and it fails at both ends of that range.** A caustic net tuned
+  to look right beside the boat had ~1.2-unit cells: directly under the camera
+  one cell smeared across a third of the frame, and 40 units downstream the same
+  cells undersampled into crawling white confetti. Both were read as "the water
+  looks bad" and neither is fixable by tuning the frequency — moving it just
+  swaps which end breaks. The fix is to gate detail on distance from the camera
+  (`length(vWorldPos - cameraPosition)`, a `smoothstep` in and a `smoothstep`
+  out) so it is only drawn across the band where it is legible, and let
+  everything outside relax to flat colour and then to fog. The same argument
+  applies to any near-camera effect measured in world units: a wake 0.17 units
+  wide is a hairline at the horizon and a searchlight at the bottom of the
+  frame, so its *strength* has to be picked from a screenshot of the near field,
+  not from how it looks next to the boat.
+- **Lighting a stylised scene from where you drew the sun is the physically
+  consistent choice and it can be the wrong one.** With the sun ahead down the
+  river, every camera-facing surface — hull, rocks, logs — was a back-lit
+  silhouette lit only by hemisphere fill, so a `#ffc94f` boat rendered as dull
+  olive and a mid-grey rock as near-black. Nothing is broken; the albedos are
+  simply never seen. Split the two: keep the sun disc/glow in the sky shader
+  where it composes, and aim the `DirectionalLight` from over the camera's
+  shoulder. Nothing in this scene casts a shadow, so nothing gives the split
+  away — but check for shadow casters before reaching for it.

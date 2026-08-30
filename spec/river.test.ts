@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BOAT_RADIUS, touchesRock } from "../regatta.ts";
+import { BOAT_RADIUS, touchesLog, touchesRock } from "../regatta.ts";
 import {
   COURSE_LENGTH,
   OPENING_CALM,
@@ -51,12 +51,22 @@ describe("every generated course is fair", () => {
         for (const rock of river.rocks) {
           expect(rock.y).toBeGreaterThanOrEqual(OPENING_CALM);
         }
+        for (const log of river.logs) {
+          expect(log.y).toBeGreaterThanOrEqual(OPENING_CALM);
+        }
       });
 
       it("keeps every rock inside the banks", () => {
         for (const rock of river.rocks) {
           const offset = Math.abs(rock.x - centreAt(rock.y));
           expect(offset + rock.r).toBeLessThanOrEqual(halfWidthAt(rock.y));
+        }
+      });
+
+      it("keeps every log inside the banks", () => {
+        for (const log of river.logs) {
+          const nearEdge = Math.abs(log.x - centreAt(log.y)) + log.half;
+          expect(nearEdge).toBeLessThanOrEqual(halfWidthAt(log.y));
         }
       });
 
@@ -75,7 +85,7 @@ describe("every generated course is fair", () => {
           let clear = false;
           for (let i = 0; i <= 400 && !clear; i += 1) {
             const x = centre - reach + (2 * reach * i) / 400;
-            if (!touchesRock(river, x, y)) clear = true;
+            if (!touchesRock(river, x, y) && !touchesLog(river, x, y)) clear = true;
           }
           expect(clear, `no passable line at y=${y}`).toBe(true);
         }
