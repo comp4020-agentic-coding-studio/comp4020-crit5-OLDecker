@@ -15,6 +15,7 @@ import {
 } from "./regatta.ts";
 import { buildRiver, seedFromCode } from "./river.ts";
 import { makeRoomCode, roomFromHash } from "./room.ts";
+import { connectRoom } from "./net.ts";
 
 /**
  * Physics runs in slices no longer than this however long the frame took. At
@@ -81,6 +82,13 @@ let cameraX = race.boat.x;
 let ending: Ending | null = null;
 let finishedAt = 0;
 let firstRace = true;
+let selfFinishMs: number | null = null;
+
+// Optional, and never waited on: this returns before a packet has moved and the
+// river is already playable. If somebody opens the same link the pacer quietly
+// becomes them; if nobody does, or the relay is unreachable, or the NAT refuses,
+// nothing about the game changes. See net.ts.
+const net = connectRoom(code, () => showResult());
 
 // ---------------------------------------------------------------------------
 // Input. One gesture carries propulsion and steering: hold a side to paddle on
@@ -186,23 +194,51 @@ const VERDICTS: Record<Ending["outcome"], string> = {
   tied: "Together at the bend",
 };
 
+/** A real rival still on the water. Their lantern hasn't gone up yet. */
+const STILL_OUT = "At the bend";
+
 function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function finish(selfMs: number, rivalMs: number): void {
-  ending = { outcome: outcome(selfMs, rivalMs), ageMs: 0 };
-  finishedAt = performance.now();
-  verdict.textContent = VERDICTS[ending.outcome];
-  times.textContent = `${seconds(selfMs)} · ${seconds(rivalMs)}`;
+/**
+ * Called on finishing, and again if a live rival finishes after you. Racing a
+ * person means their time can arrive later than yours -- both clocks start on
+ * their own owner's first stroke, so there is no shared start to line them up
+ * against -- and the panel fills in the verdict when it does. Against the pacer
+ * the second call never comes, because the pacer's time is known up front.
+ */
+function showResult(): void {
+  const selfMs = selfFinishMs;
+  const at = ending;
+  if (selfMs === null || !at) return;
+
+  const rivalMs = net.live ? net.rivalFinishMs : pacerTargetMs(race.startY);
+  if (rivalMs === null) {
+    verdict.textContent = STILL_OUT;
+    times.textContent = seconds(selfMs);
+  } else {
+    ending = { ...at, outcome: outcome(selfMs, rivalMs) };
+    verdict.textContent = VERDICTS[outcome(selfMs, rivalMs)];
+    times.textContent = `${seconds(selfMs)} · ${seconds(rivalMs)}`;
+  }
   result.hidden = false;
   invite.classList.remove("dim");
+}
+
+function finish(selfMs: number): void {
+  selfFinishMs = selfMs;
+  finishedAt = performance.now();
+  // Both lanterns rise together until there is a reason for one to go first.
+  ending = { outcome: "tied", ageMs: 0 };
+  showResult();
 }
 
 function restart(): void {
   race = initialRace();
   cameraX = race.boat.x;
   ending = null;
+  selfFinishMs = null;
   firstRace = false;
   result.hidden = true;
   view.focus();
@@ -255,9 +291,7 @@ function frame(now: number): void {
     for (let left = elapsed; left > 0; left -= MAX_SUB_MS) {
       race = step(river, race, input, Math.min(MAX_SUB_MS, left));
     }
-    if (race.finishedMs !== null) {
-      finish(race.finishedMs, pacerTargetMs(race.startY));
-    }
+    if (race.finishedMs !== null) finish(race.finishedMs);
   }
 
   // Ease the camera rather than pinning it to the boat, so a stroke reads as
@@ -267,9 +301,25 @@ function frame(now: number): void {
 
   title.classList.toggle("away", race.started);
   invite.classList.toggle("dim", race.started && !ending);
+  invite.classList.toggle("live", net.live);
 
+  net.publish(
+    {
+      x: race.boat.x,
+      y: race.boat.y,
+      lean: race.boat.lean,
+      capsizing: race.boat.capsizeMs > 0,
+      done: race.finishedMs,
+    },
+    now,
+  );
+
+  // A real person displaces the pacer the moment one of their snapshots lands.
+  const peer = net.poseAt(now);
   const pacer = pacerPose(race.elapsedMs, race.startY);
-  const rival: Rival = { x: pacer.x, y: pacer.y, ghost: true };
+  const rival: Rival = peer
+    ? { x: peer.x, y: peer.y, lean: peer.lean, ghost: false }
+    : { x: pacer.x, y: pacer.y, lean: 0, ghost: true };
 
   const hint =
     firstRace && !race.started

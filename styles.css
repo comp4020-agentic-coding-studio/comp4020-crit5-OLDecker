@@ -167,6 +167,13 @@ header nav a:focus-visible {
   border-color: rgb(255 183 101 / 90%);
 }
 
+/* Someone is actually on the other end of the link. The only trace the network
+   leaves on the page: a lit ring, no words, no status line. */
+.invite.live button {
+  border-color: rgb(255 183 101 / 55%);
+  box-shadow: 0 0 0 4px rgb(255 183 101 / 12%);
+}
+
 .result {
   position: absolute;
   inset: auto 0 12%;

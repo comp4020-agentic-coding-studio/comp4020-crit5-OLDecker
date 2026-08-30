@@ -6,8 +6,11 @@ import {
   normaliseRoomCode,
   reduce,
   roomFromHash,
+  sampleTrail,
+  trimTrail,
   type RoomEvent,
   type RoomState,
+  type Snapshot,
 } from "../room.ts";
 
 // Covers the pure connection logic only. Whether two browsers on two different
@@ -178,5 +181,87 @@ describe("room codes", () => {
 
   it("finds the code when the hash carries other parameters too", () => {
     expect(roomFromHash("#debug=1&r=abcd23")).toBe("abcd23");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The rival's trail. What is drawn is never the newest snapshot: it is where
+// the peer was BUFFER_MS ago, interpolated. These are the rules that turn 10 Hz
+// of packets into a boat, and every one of them is a decision that could
+// plausibly have gone the other way.
+// ---------------------------------------------------------------------------
+
+function snap(t: number, x: number, y: number, capsizing = false): Snapshot {
+  return { t, x, y, lean: 0, capsizing };
+}
+
+describe("the rival's trail", () => {
+  it("has nothing to draw before the first snapshot arrives", () => {
+    expect(sampleTrail([], 1000)).toBeNull();
+  });
+
+  it("interpolates between the two snapshots straddling the moment asked for", () => {
+    const trail = [snap(1000, 0, 10), snap(1100, 2, 14)];
+    const at = sampleTrail(trail, 1050);
+    expect(at?.x).toBeCloseTo(1);
+    expect(at?.y).toBeCloseTo(12);
+  });
+
+  it("interpolates lean too, so a leaning peer doesn't snap upright between packets", () => {
+    const trail = [
+      { t: 0, x: 0, y: 0, lean: -1, capsizing: false },
+      { t: 100, x: 0, y: 0, lean: 1, capsizing: false },
+    ];
+    expect(sampleTrail(trail, 50)?.lean).toBeCloseTo(0);
+  });
+
+  it("never extrapolates past the newest snapshot", () => {
+    // The point of the whole render delay. A peer whose packets stop must hold
+    // position: "the link dropped" and "they are still paddling" have to look
+    // different, and a boat sailing on forever is the wrong one to show.
+    const trail = [snap(1000, 0, 10), snap(1100, 2, 20)];
+    const late = sampleTrail(trail, 9999);
+    expect(late?.y).toBe(20);
+    expect(late?.x).toBe(2);
+  });
+
+  it("holds at the oldest snapshot when asked for a moment before the trail starts", () => {
+    const trail = [snap(1000, 5, 10), snap(1100, 6, 12)];
+    expect(sampleTrail(trail, 0)?.y).toBe(10);
+  });
+
+  it("switches capsize state outright rather than crossfading it", () => {
+    // A boat is either rolled over or it isn't; there is no half-capsized pose
+    // to render, so this is the one field that must not be averaged.
+    const trail = [snap(0, 0, 0, false), snap(100, 0, 0, true)];
+    expect(sampleTrail(trail, 30)?.capsizing).toBe(false);
+    expect(sampleTrail(trail, 70)?.capsizing).toBe(true);
+  });
+
+  it("survives two snapshots landing in the same millisecond", () => {
+    const trail = [snap(500, 1, 1), snap(500, 3, 3)];
+    expect(sampleTrail(trail, 500)?.x).toBe(3);
+  });
+
+  it("keeps the snapshot before the render time when trimming, not just the ones after", () => {
+    // Dropping it would leave the render delay pointing past the front of the
+    // trail every trim, and the rival would snap forward once a second.
+    const trail = [snap(0, 0, 0), snap(100, 1, 1), snap(200, 2, 2), snap(300, 3, 3)];
+    const kept = trimTrail(trail, 250);
+    expect(kept[0].t).toBe(200);
+    expect(kept.at(-1)?.t).toBe(300);
+  });
+
+  it("trims nothing when every snapshot is still needed", () => {
+    const trail = [snap(100, 1, 1), snap(200, 2, 2)];
+    expect(trimTrail(trail, 150)).toBe(trail);
+  });
+
+  it("interpolates identically before and after a trim", () => {
+    // The property that makes trimming safe to do every frame.
+    const trail = [snap(0, 0, 0), snap(100, 1, 1), snap(200, 2, 2), snap(300, 3, 3)];
+    expect(sampleTrail(trimTrail(trail, 250), 250)?.x).toBeCloseTo(
+      sampleTrail(trail, 250)?.x ?? Number.NaN,
+    );
   });
 });

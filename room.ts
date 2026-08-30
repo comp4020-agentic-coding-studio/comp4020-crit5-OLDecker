@@ -141,3 +141,68 @@ export function roomFromHash(hash: string): string | null {
   const match = /(?:^|[#&])r=([^&]*)/.exec(hash);
   return match ? normaliseRoomCode(match[1]) : null;
 }
+
+// ---------------------------------------------------------------------------
+// The rival's trail. Snapshots arrive about ten times a second over a link with
+// no delivery guarantees and no clock in common, so what gets drawn is not the
+// newest one: it's the position the peer held a fixed delay ago, interpolated
+// between the two snapshots straddling it. At drift speed that delay is
+// invisible, and it is the whole reason 10 Hz of jittery packets can be drawn
+// as a boat rather than a strobe.
+//
+// `t` is the LOCAL time the snapshot arrived, never the sender's clock. Nothing
+// here needs the two machines to agree on what time it is, which removes the
+// only piece of state that would have had to be synchronised.
+// ---------------------------------------------------------------------------
+
+export type Snapshot = {
+  t: number;
+  x: number;
+  y: number;
+  lean: number;
+  capsizing: boolean;
+};
+
+/**
+ * Where the peer was at local time `at`.
+ *
+ * Never extrapolates past the newest snapshot. A peer whose packets stop is
+ * held where they were last seen rather than sailing on forever: "the link
+ * dropped" and "they are still paddling" must not look the same, and of the two
+ * readings a boat that stops dead is the honest one.
+ */
+export function sampleTrail(trail: Snapshot[], at: number): Snapshot | null {
+  if (trail.length === 0) return null;
+  const newest = trail[trail.length - 1];
+  if (at >= newest.t) return newest;
+  if (at <= trail[0].t) return trail[0];
+
+  for (let i = 1; i < trail.length; i += 1) {
+    const b = trail[i];
+    if (b.t < at) continue;
+    const a = trail[i - 1];
+    const span = b.t - a.t;
+    const f = span <= 0 ? 1 : (at - a.t) / span;
+    return {
+      t: at,
+      x: a.x + (b.x - a.x) * f,
+      y: a.y + (b.y - a.y) * f,
+      lean: a.lean + (b.lean - a.lean) * f,
+      // A capsize is a state, not a quantity: crossfading it would render a
+      // boat that is half rolled over, which is not a thing that happens.
+      capsizing: f < 0.5 ? a.capsizing : b.capsizing,
+    };
+  }
+  return newest;
+}
+
+/**
+ * Drops snapshots no longer needed to interpolate at `at`, keeping the one
+ * immediately before it. Without that straggler the trail would run out from
+ * underneath the render delay and the rival would snap forward every trim.
+ */
+export function trimTrail(trail: Snapshot[], at: number): Snapshot[] {
+  let keep = 0;
+  while (keep + 1 < trail.length && trail[keep + 1].t <= at) keep += 1;
+  return keep === 0 ? trail : trail.slice(keep);
+}

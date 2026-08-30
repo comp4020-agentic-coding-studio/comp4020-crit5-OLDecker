@@ -66,7 +66,7 @@ const ROCK_DARK = "#22232b";
 const ROCK_LIT = "#4d4e5c";
 const EMBER = "#ffb765";
 
-export type Rival = { x: number; y: number; ghost: boolean };
+export type Rival = { x: number; y: number; lean: number; ghost: boolean };
 
 export type Ending = {
   outcome: "won" | "lost" | "tied";
@@ -740,7 +740,18 @@ export function draw(
   const rival = scene.rival;
   const drawRival = (): void => {
     if (!rival) return;
-    drawBoat(ctx, view, rival.x, rival.y, 0, 0, RIVAL_PAPER, RIVAL_FOLD, rival.ghost ? 0.55 : 1, 0.7);
+    drawBoat(
+      ctx,
+      view,
+      rival.x,
+      rival.y,
+      rival.lean,
+      0,
+      RIVAL_PAPER,
+      RIVAL_FOLD,
+      rival.ghost ? 0.55 : 1,
+      0.7,
+    );
   };
 
   // Depth order: whichever boat is further upstream is painted first, so a rock
