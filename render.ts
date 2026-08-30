@@ -691,12 +691,17 @@ function vignette(ctx: CanvasRenderingContext2D, view: View): void {
  * you close on it. This is the game's entire progress indicator: a HUD would be
  * a second thing to read, and there is nothing to read here on purpose.
  */
-function finishGlow(ctx: CanvasRenderingContext2D, view: View): void {
+function finishGlow(
+  ctx: CanvasRenderingContext2D,
+  view: View,
+  handover: number,
+): void {
+  if (handover <= 0) return;
   const left = COURSE_LENGTH - view.boatY;
   if (left > VIEW_DEPTH * 2.2) return;
-  const near = 1 - Math.max(0, left) / (VIEW_DEPTH * 2.2);
+  const near = (1 - Math.max(0, left) / (VIEW_DEPTH * 2.2)) * handover;
   const p = project(view, centreAt(COURSE_LENGTH), Math.min(COURSE_LENGTH, view.boatY + VIEW_DEPTH));
-  const r = view.h * (0.06 + near * 0.3);
+  const r = view.h * (0.06 + near * 0.3) * handover;
 
   ctx.save();
   const glow = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, r);
@@ -733,7 +738,16 @@ export function draw(
   water(ctx, view, cuts);
   ripples(ctx, view, cuts, scene.timeMs);
   haze(ctx, view, cuts);
-  finishGlow(ctx, view);
+  // Once you have arrived, the bend hands its light to the lanterns: held at
+  // full strength it is a 0.36h disc at 0.66 alpha parked over the middle of
+  // the frame, and the verdict and the restart button are read through it.
+  // Only visible by playing to the end -- during the race it looks right,
+  // because during the race it is right.
+  finishGlow(
+    ctx,
+    view,
+    scene.ending ? Math.max(0, 1 - scene.ending.ageMs / 1100) : 1,
+  );
   reeds(ctx, view);
 
   const { boat } = scene.race;
