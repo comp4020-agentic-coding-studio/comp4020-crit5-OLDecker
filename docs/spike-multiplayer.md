@@ -9,7 +9,7 @@ the deploy** — and with one class of network it will never reach.
 
 ## What was tried
 
-[`da848c2`](../../commit/da848c2) probed [trystero](https://github.com/dmotz/trystero)
+[`da848c2`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit5-OLDecker/commit/da848c2) probed [trystero](https://github.com/dmotz/trystero)
 `0.25.3` over public Nostr relays: peers announce themselves on a relay, swap
 SDP through it, then talk directly over WebRTC. The relay only introduces them.
 It ships as an ordinary Vite dependency — 58.86 kB gzipped to 21.53 kB, and
