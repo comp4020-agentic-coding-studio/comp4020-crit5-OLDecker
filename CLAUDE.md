@@ -190,3 +190,61 @@ behind. `spec/README.md` draws the line.
   Mac in the UA, but exposes multiple touch points unlike a real Mac) and
   showing a one-time hint after playback starts — not pretending to detect
   the switch itself. See `isIOS()` in `main.ts`.
+- **trystero picks its relays deterministically from `appId`, and a bad pick
+  fails silently.** The library hashes the `appId` to choose which Nostr relays
+  to announce on; a given app id can land entirely on relays that refuse to
+  write (`blocked: not authorized`), demand proof of work (`pow: insufficient
+  leading-zero bits`) or rate-limit (`rate-limited: you are noting too much`).
+  None of that rejects a promise — an announce failure is a `console.warn` and
+  nothing else. `joinRoom` resolves, the room object looks healthy, and
+  `onPeerJoin` just never fires, which is indistinguishable from *nobody else
+  has joined yet*, the ordinary case. Cost most of a debugging session before
+  the pattern was visible. Name the relays explicitly (`relayConfig: { urls,
+  redundancy }`) rather than trusting the default pick, and when peers cannot
+  find each other, check `getRelaySockets()` for how many are actually open
+  before suspecting anything in your own code.
+- **A WebRTC connection failure in headless Chromium is not evidence of a
+  WebRTC problem.** Headless Chromium hides local IPs behind mDNS `.local`
+  candidates it then cannot resolve, so two contexts in the same browser
+  exchange SDP successfully and then never connect. The error text points
+  exactly the wrong way — trystero surfaces it as *"could not connect to peer
+  … after exchanging SDP; configure TURN servers"*, which reads as a NAT
+  traversal gap in the product. Launch with
+  `--disable-features=WebRtcHideLocalIpsWithMdns` before believing it: with
+  that flag the same two peers connected in ~6 s. Anything peer-to-peer is
+  worth testing in a real browser before it is written up as a coverage hole.
+- **trystero reaches for `crypto.subtle` unconditionally**, and it is
+  `undefined` on an insecure origin. On `http://<LAN-IP>:5173` — the obvious
+  way to test a second device — it throws inside a floating promise: nothing is
+  logged, the join never settles, and the page sits in "connecting" forever.
+  `localhost` *is* a secure context, so this never reproduces in local testing.
+  Guard on `globalThis.isSecureContext` before joining, and use HTTPS (a
+  tunnel, or the deployed Pages URL) for any second-device test.
+- **A normaliser that returns `null` on bad input, paired with a "generate a
+  fresh one" fallback, turns a typo into a silent private room.** Room codes
+  here come from an alphabet with the lookalikes dropped
+  (`abcdefghjkmnpqrstuvwxyz23456789` — no `o`, `i`, `l`, `0`, `1`), so a
+  plausible-looking `#r=duotst` normalises to `null` and each page quietly
+  makes up its own room. Both ends then work perfectly and never meet. Burned a
+  full debugging cycle on a *test* whose room code contained an `o`. Whenever an
+  invalid identifier degrades to a working-but-different state rather than an
+  error, that path needs to be loud somewhere a developer will see it.
+- **`node --experimental-strip-types` runs the repo's own `.ts` modules
+  directly** (Node 24 here; no build step, no vitest wrapper), which makes a
+  pure game reducer measurable instead of guessable. Driving `step()` in a loop
+  with a scripted pilot answered *"is this course beatable, and are the
+  collisions avoidable or just unfair?"* in seconds — a competent line finishes
+  50–53 s against a 52 s pacer — where playing it by hand would have taken an
+  afternoon and produced an anecdote. Keeping the rules pure and DOM-free is
+  what buys this; it is worth the discipline for that reason alone.
+- **An animation parameter that is correct while it is changing can be wrong
+  once it stops.** A finish glow driven by *distance remaining* swelled
+  correctly all the way down the river, then froze at full strength the instant
+  the boat arrived — parking a 0.36×height disc at 0.66 alpha over the middle
+  of the frame for the whole ending screen, exactly where the result text and
+  the restart button are. Every frame of the race looked right; only the frames
+  *after* the race were wrong. No test catches this and no screenshot of
+  gameplay shows it: it only appears if you play a run to the end and keep
+  looking after the outcome is decided. When a quantity feeds a visual and that
+  quantity has a terminal value, look at what the visual does once it gets
+  there.
