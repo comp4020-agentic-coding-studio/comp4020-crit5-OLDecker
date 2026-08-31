@@ -28,6 +28,15 @@ export type Ending = {
   outcome: "won" | "lost" | "tied";
   /** Milliseconds since the finish, for the lantern rise. */
   ageMs: number;
+  /** Your place in the field, 1-based. */
+  place: number;
+  /**
+   * How many boats have finished, yours included -- one lantern each, once the
+   * lantern sequence is ported to 3D. Nothing here reads it yet; it is computed
+   * where the placings are, which is the only place it can be computed, and
+   * dropping it would mean recovering it later from a panel string.
+   */
+  field: number;
 };
 
 /**
@@ -41,7 +50,8 @@ export type Stroke = { active: boolean; side: -1 | 0 | 1 };
 export type Scene = {
   river: River;
   race: Race;
-  rival: Rival | null;
+  /** Everyone else on the water: the pacer, or one entry per connected peer. */
+  rivals: Rival[];
   /** Smoothed camera, so the frame doesn't twitch with every stroke. */
   cameraX: number;
   /** Wall clock, for water motion that runs whether or not the race does. */
@@ -227,10 +237,29 @@ export function createRenderer(
   scene3js.add(player.group);
   const playerPaddle = newPaddleState();
 
-  const rivalBoat = buildKayak(RIVAL_HULL, RIVAL_FOLD);
-  rivalBoat.group.visible = false;
-  scene3js.add(rivalBoat.group);
-  const rivalPaddle = newPaddleState();
+  // Built on demand and never destroyed: a room can gain a boat mid-race and
+  // three-up is already the common case, but hulls are cheap and rebuilding one
+  // every time a peer blinks out costs a frame. Boats are keyed by position in
+  // the pose list rather than by peer id -- each is posed absolutely every frame
+  // and carries no state of its own, so a departure reshuffling the list is
+  // invisible. The interpolation that *does* need per-peer identity lives in
+  // room.ts, where the trails are.
+  type RivalBoat = {
+    group: THREE.Group;
+    paddlePivot: THREE.Group;
+    paddle: ReturnType<typeof newPaddleState>;
+  };
+  const rivalBoats: RivalBoat[] = [];
+
+  function rivalBoatAt(index: number): RivalBoat {
+    const existing = rivalBoats[index];
+    if (existing) return existing;
+    const built = buildKayak(RIVAL_HULL, RIVAL_FOLD);
+    scene3js.add(built.group);
+    const boat: RivalBoat = { ...built, paddle: newPaddleState() };
+    rivalBoats[index] = boat;
+    return boat;
+  }
 
   const sun = new THREE.DirectionalLight(0xfff6e0, 1.15);
   sun.position.copy(KEY_DIR).multiplyScalar(30);
@@ -303,22 +332,25 @@ export function createRenderer(
       dtSeconds,
     );
 
-    if (scene.rival) {
-      rivalBoat.group.visible = true;
-      const opacity = scene.rival.ghost ? 0.55 : 1;
+    // No depth sorting: the 2D renderer had to split the field around the rocks
+    // by hand, and the depth buffer does that for free here.
+    scene.rivals.forEach((rival, index) => {
+      const boat = rivalBoatAt(index);
+      boat.group.visible = true;
       poseKayak(
-        rivalBoat.group,
-        scene.rival.x,
-        scene.rival.y,
-        scene.rival.lean,
+        boat.group,
+        rival.x,
+        rival.y,
+        rival.lean,
         0,
-        opacity,
+        rival.ghost ? 0.55 : 1,
         seconds,
       );
       // A rival is always under way, and their input isn't ours to know.
-      stepPaddle(rivalBoat.paddlePivot, rivalPaddle, 0, true, dtSeconds);
-    } else {
-      rivalBoat.group.visible = false;
+      stepPaddle(boat.paddlePivot, boat.paddle, 0, true, dtSeconds);
+    });
+    for (let i = scene.rivals.length; i < rivalBoats.length; i += 1) {
+      rivalBoats[i].group.visible = false;
     }
 
     const camX = scene.cameraX;

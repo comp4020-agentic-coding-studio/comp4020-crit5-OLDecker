@@ -15,8 +15,8 @@
 // would have been the one piece of network on the critical path, which is
 // exactly the thing this file is built to avoid.
 
-import type { Snapshot } from "./room.ts";
-import { sampleTrail, trimTrail } from "./room.ts";
+import type { Trails } from "./room.ts";
+import { forgetPeer, posesFrom, recordSnapshot } from "./room.ts";
 
 const APP_ID = "comp4020-oldecker-regatta";
 
@@ -64,12 +64,18 @@ export type Wire = {
 export type Pose = { x: number; y: number; lean: number; capsizing: boolean };
 
 export type Net = {
-  /** True once a real person is in the room. */
+  /** True once at least one real person is in the room. */
   readonly live: boolean;
-  /** Their elapsed run, once they have finished it. */
+  /**
+   * The quickest run any rival has finished, or null while none have. The
+   * verdict turns on this one: the fastest rival either beat you or did not,
+   * however many boats were on the water.
+   */
   readonly rivalFinishMs: number | null;
-  /** Where to draw them right now, or null when there is nobody to draw. */
-  poseAt(now: number): Pose | null;
+  /** Every finished rival's elapsed run, quickest first. */
+  readonly rivalFinishTimes: number[];
+  /** Where to draw each rival right now; empty when there is nobody to draw. */
+  posesAt(now: number): Pose[];
   publish(wire: Wire, now: number): void;
 };
 
@@ -78,7 +84,8 @@ function solo(): Net {
   return {
     live: false,
     rivalFinishMs: null,
-    poseAt: () => null,
+    rivalFinishTimes: [],
+    posesAt: () => [],
     publish: () => {},
   };
 }
@@ -90,9 +97,11 @@ export function connectRoom(code: string, onChange: () => void): Net {
   // because "silently hung" is the one failure mode this file must not have.
   if (!globalThis.isSecureContext || !navigator.onLine) return solo();
 
-  let trail: Snapshot[] = [];
+  let trails: Trails = new Map();
   let peers = 0;
-  let finish: number | null = null;
+  // Per peer, so a second finisher cannot clobber the first and a late joiner
+  // cannot erase either.
+  const finishes = new Map<string, number>();
   let send: ((wire: Wire) => void) | null = null;
   let lastSent = Number.NEGATIVE_INFINITY;
   let sentDone = false;
@@ -102,14 +111,22 @@ export function connectRoom(code: string, onChange: () => void): Net {
       return peers > 0;
     },
     get rivalFinishMs(): number | null {
-      return finish;
+      return finishes.size === 0 ? null : Math.min(...finishes.values());
     },
-    poseAt(now: number): Pose | null {
-      if (peers === 0) return null;
+    get rivalFinishTimes(): number[] {
+      return [...finishes.values()].sort((a, b) => a - b);
+    },
+    posesAt(now: number): Pose[] {
+      if (peers === 0) return [];
       const at = now - BUFFER_MS;
-      trail = trimTrail(trail, at);
-      const s = sampleTrail(trail, at);
-      return s && { x: s.x, y: s.y, lean: s.lean, capsizing: s.capsizing };
+      const sampled = posesFrom(trails, at);
+      trails = sampled.trails;
+      return sampled.poses.map((s) => ({
+        x: s.x,
+        y: s.y,
+        lean: s.lean,
+        capsizing: s.capsizing,
+      }));
     },
     publish(wire: Wire, now: number): void {
       if (!send) return;
@@ -142,6 +159,8 @@ export function connectRoom(code: string, onChange: () => void): Net {
         {
           onJoinError: () => {
             peers = 0;
+            trails = new Map();
+            finishes.clear();
             onChange();
           },
         },
@@ -150,31 +169,37 @@ export function connectRoom(code: string, onChange: () => void): Net {
       const pose = room.makeAction<Wire>("pose");
       send = (wire) => void pose.send(wire);
 
-      pose.onMessage = (wire) => {
-        trail.push({
+      // The context carries the sender. Dropping it is what turns three boats
+      // into one phantom: their snapshots interleave by arrival time and get
+      // interpolated across, which fails silently because it still works.
+      pose.onMessage = (wire, { peerId }) => {
+        trails = recordSnapshot(trails, peerId, {
           t: performance.now(),
           x: wire.x,
           y: wire.y,
           lean: wire.lean,
           capsizing: wire.capsizing,
         });
-        if (wire.done !== null && finish === null) {
-          finish = wire.done;
+        if (wire.done !== null && finishes.get(peerId) !== wire.done) {
+          finishes.set(peerId, wire.done);
           onChange();
         }
       };
 
-      room.onPeerJoin = () => {
+      room.onPeerJoin = (peerId) => {
         peers += 1;
-        // Their old trail is someone else's race; interpolating across the swap
-        // would drag the new boat in from wherever the last one stopped.
-        trail = [];
-        finish = null;
+        // Only this peer is reset: their old trail is a previous race, and
+        // interpolating across the swap would drag their boat in from wherever
+        // it stopped. Everyone else is mid-run and must not be touched.
+        trails = forgetPeer(trails, peerId);
+        finishes.delete(peerId);
         onChange();
       };
 
-      room.onPeerLeave = () => {
+      room.onPeerLeave = (peerId) => {
         peers = Math.max(0, peers - 1);
+        trails = forgetPeer(trails, peerId);
+        finishes.delete(peerId);
         onChange();
       };
     } catch {

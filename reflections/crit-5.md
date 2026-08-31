@@ -29,3 +29,8 @@ into the docs on its say-so. The real cause was mDNS candidate hiding in the
 test browser. The error text was confident, specific, and pointing the wrong
 way — and reading it as evidence rather than as a claim would have put a false
 limitation in writing.
+
+
+reflection: 
+I had to reproduce basically the whole functionallity underneath because it did not use Threejs in the beginning and i wanted to have a nice 2.5 d feeling to it initially.
+

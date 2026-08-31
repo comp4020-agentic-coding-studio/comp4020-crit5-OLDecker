@@ -5,12 +5,16 @@ import {
   makeRoomCode,
   normaliseRoomCode,
   reduce,
+  forgetPeer,
+  posesFrom,
+  recordSnapshot,
   roomFromHash,
   sampleTrail,
   trimTrail,
   type RoomEvent,
   type RoomState,
   type Snapshot,
+  type Trails,
 } from "../room.ts";
 
 // Covers the pure connection logic only. Whether two browsers on two different
@@ -263,5 +267,84 @@ describe("the rival's trail", () => {
     expect(sampleTrail(trimTrail(trail, 250), 250)?.x).toBeCloseTo(
       sampleTrail(trail, 250)?.x ?? Number.NaN,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// More than one rival. Every peer's snapshots arrive on the same callback, so
+// the only thing that keeps three boats apart is the sender id. Get this wrong
+// and nothing throws -- `sampleTrail` interpolates happily between two
+// different people and draws one boat swinging across the river.
+// ---------------------------------------------------------------------------
+
+function record(entries: [string, Snapshot][]): Trails {
+  return entries.reduce<Trails>(
+    (trails, [peerId, s]) => recordSnapshot(trails, peerId, s),
+    new Map(),
+  );
+}
+
+describe("a river with more than one rival on it", () => {
+  it("keeps each peer's snapshots on their own trail", () => {
+    // Interleaved by arrival time, exactly as the transport delivers them.
+    const trails = record([
+      ["a", snap(0, -2, 0)],
+      ["b", snap(0, 2, 0)],
+      ["a", snap(100, -2, 10)],
+      ["b", snap(100, 2, 10)],
+    ]);
+    const { poses } = posesFrom(trails, 50);
+    expect(poses).toHaveLength(2);
+    // Two boats holding their own sides of the river. Folded into one trail
+    // this samples to a single boat somewhere near the middle instead.
+    expect(poses.map((p) => p.x).sort((m, n) => m - n)).toEqual([-2, 2]);
+    for (const pose of poses) expect(pose.y).toBeCloseTo(5);
+  });
+
+  it("skips a peer with nothing drawable yet rather than leaving a hole", () => {
+    const trails = recordSnapshot(record([["a", snap(0, 1, 1)]]), "b", snap(0, 0, 0));
+    expect(posesFrom(trails, 0).poses).toHaveLength(2);
+    expect(posesFrom(new Map([["a", []]]), 0).poses).toEqual([]);
+  });
+
+  it("trims each peer's trail independently and samples the same either way", () => {
+    const trails = record([
+      ["a", snap(0, 0, 0)],
+      ["a", snap(100, 1, 1)],
+      ["a", snap(200, 2, 2)],
+      ["b", snap(150, 9, 9)],
+    ]);
+    const once = posesFrom(trails, 150);
+    const twice = posesFrom(once.trails, 150);
+    expect(twice.poses).toEqual(once.poses);
+    expect(once.trails.get("a")?.[0].t).toBe(100);
+    expect(once.trails.get("b")).toHaveLength(1);
+  });
+
+  it("forgets one peer without disturbing anybody else's race", () => {
+    // The bug this exists to stop: a third player joining used to wipe the
+    // trail and the finish time of everyone already on the water.
+    const trails = record([
+      ["a", snap(0, 1, 1)],
+      ["b", snap(0, 2, 2)],
+    ]);
+    const left = forgetPeer(trails, "b");
+    expect(left.has("b")).toBe(false);
+    expect(left.get("a")).toEqual(trails.get("a"));
+  });
+
+  it("leaves the map alone when asked to forget somebody who was never there", () => {
+    const trails = record([["a", snap(0, 1, 1)]]);
+    expect(forgetPeer(trails, "ghost")).toBe(trails);
+  });
+
+  it("does not mutate the trails it is given", () => {
+    // Every caller holds the previous map for the length of a frame.
+    const before = record([["a", snap(0, 1, 1)]]);
+    recordSnapshot(before, "a", snap(100, 5, 5));
+    recordSnapshot(before, "b", snap(100, 5, 5));
+    forgetPeer(before, "a");
+    expect(before.size).toBe(1);
+    expect(before.get("a")).toHaveLength(1);
   });
 });

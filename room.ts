@@ -206,3 +206,59 @@ export function trimTrail(trail: Snapshot[], at: number): Snapshot[] {
   while (keep + 1 < trail.length && trail[keep + 1].t <= at) keep += 1;
   return keep === 0 ? trail : trail.slice(keep);
 }
+
+// ---------------------------------------------------------------------------
+// More than one rival. Every peer's snapshots arrive on the same callback and
+// the sender's id is the only thing separating them -- fold them into one trail
+// and `sampleTrail` will cheerfully interpolate between two different people,
+// drawing a single boat that swings across the river at the combined send rate.
+// The maths succeeds, so nothing reports a fault: it just draws the wrong boat.
+// Hence a trail per peer, keyed by the id the transport already hands over.
+// ---------------------------------------------------------------------------
+
+export type Trails = ReadonlyMap<string, Snapshot[]>;
+
+export function recordSnapshot(
+  trails: Trails,
+  peerId: string,
+  snap: Snapshot,
+): Trails {
+  const next = new Map(trails);
+  const own = next.get(peerId);
+  next.set(peerId, own ? [...own, snap] : [snap]);
+  return next;
+}
+
+/**
+ * Drops a peer entirely. Used when they leave, and also when they *join* — a
+ * rejoining id arrives with a stale trail from their last race, and
+ * interpolating across the gap would drag their boat in from wherever it
+ * stopped. Only that peer is affected; everyone else is mid-race.
+ */
+export function forgetPeer(trails: Trails, peerId: string): Trails {
+  if (!trails.has(peerId)) return trails;
+  const next = new Map(trails);
+  next.delete(peerId);
+  return next;
+}
+
+/**
+ * Every rival's pose at local time `at`, with the trails trimmed to match.
+ * Each peer is trimmed and sampled against its own trail only. A peer with
+ * nothing usable yet is skipped rather than emitting a hole, so the caller gets
+ * a list it can draw straight through.
+ */
+export function posesFrom(
+  trails: Trails,
+  at: number,
+): { trails: Trails; poses: Snapshot[] } {
+  const next = new Map<string, Snapshot[]>();
+  const poses: Snapshot[] = [];
+  for (const [peerId, trail] of trails) {
+    const trimmed = trimTrail(trail, at);
+    next.set(peerId, trimmed);
+    const pose = sampleTrail(trimmed, at);
+    if (pose) poses.push(pose);
+  }
+  return { trails: next, poses };
+}
