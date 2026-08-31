@@ -36,7 +36,8 @@ body {
   /* iOS ignores user-select: none for its own long-press callout (the
      Copy / Find Selection / Look Up menu) -- this is the property that
      actually suppresses it. Without it a long paddle-hold on a phone pops
-     the system menu over the canvas mid-race. */
+     the system menu over the canvas mid-race, and nothing on a desktop
+     browser or in `pnpm check` can catch that. */
   -webkit-touch-callout: none;
 }
 
