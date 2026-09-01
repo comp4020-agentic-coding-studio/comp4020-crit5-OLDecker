@@ -299,6 +299,11 @@ describe("a river with more than one rival on it", () => {
     // this samples to a single boat somewhere near the middle instead.
     expect(poses.map((p) => p.x).sort((m, n) => m - n)).toEqual([-2, 2]);
     for (const pose of poses) expect(pose.y).toBeCloseTo(5);
+    // A standings row is only as trustworthy as the id riding along with the
+    // pose it's sorted by -- each one has to name the peer it actually came
+    // from, not just land in the right place on the river.
+    expect(poses.find((p) => p.x === -2)?.id).toBe("a");
+    expect(poses.find((p) => p.x === 2)?.id).toBe("b");
   });
 
   it("skips a peer with nothing drawable yet rather than leaving a hole", () => {

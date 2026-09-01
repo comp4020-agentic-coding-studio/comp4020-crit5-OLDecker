@@ -197,6 +197,35 @@ header nav a:focus-visible {
   box-shadow: 0 0 0 4px rgb(255 183 101 / 12%);
 }
 
+/* Empty and hidden until a real rival's pose actually lands -- the one place
+   on the page that names the field, and only because "who's ahead" isn't
+   readable from the boats alone once there's more than one of them. */
+.field {
+  position: fixed;
+  top: 0.75rem;
+  right: 0.9rem;
+  z-index: 3;
+  margin: 0;
+  padding: 0.4rem 0.75rem;
+  list-style: none;
+  border: 1px solid rgb(246 236 216 / 18%);
+  border-radius: 0.9rem;
+  background: rgb(13 16 32 / 55%);
+  backdrop-filter: blur(6px);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.03em;
+  color: rgb(246 236 216 / 60%);
+}
+
+.field li + li {
+  margin-top: 0.15rem;
+}
+
+.field li.self {
+  color: rgb(255 214 158 / 95%);
+}
+
 .result {
   position: absolute;
   inset: auto 0 12%;

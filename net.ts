@@ -61,7 +61,15 @@ export type Wire = {
   done: number | null;
 };
 
-export type Pose = { x: number; y: number; lean: number; capsizing: boolean };
+export type Pose = {
+  x: number;
+  y: number;
+  lean: number;
+  capsizing: boolean;
+  /** Which peer this is -- stable for as long as they stay in the room, so a
+   *  standings list can label rows consistently instead of by draw order. */
+  id: string;
+};
 
 export type Net = {
   /** True once at least one real person is in the room. */
@@ -126,6 +134,7 @@ export function connectRoom(code: string, onChange: () => void): Net {
         y: s.y,
         lean: s.lean,
         capsizing: s.capsizing,
+        id: s.id,
       }));
     },
     publish(wire: Wire, now: number): void {

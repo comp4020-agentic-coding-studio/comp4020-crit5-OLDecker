@@ -242,23 +242,29 @@ export function forgetPeer(trails: Trails, peerId: string): Trails {
   return next;
 }
 
+export type IdentifiedPose = Snapshot & { id: string };
+
 /**
  * Every rival's pose at local time `at`, with the trails trimmed to match.
  * Each peer is trimmed and sampled against its own trail only. A peer with
  * nothing usable yet is skipped rather than emitting a hole, so the caller gets
  * a list it can draw straight through.
+ *
+ * The id rides along with each pose -- a standings list has to tell rivals
+ * apart the same way `recordSnapshot` does, or two boats collapse into one row
+ * exactly like they'd collapse into one interpolated boat without it.
  */
 export function posesFrom(
   trails: Trails,
   at: number,
-): { trails: Trails; poses: Snapshot[] } {
+): { trails: Trails; poses: IdentifiedPose[] } {
   const next = new Map<string, Snapshot[]>();
-  const poses: Snapshot[] = [];
+  const poses: IdentifiedPose[] = [];
   for (const [peerId, trail] of trails) {
     const trimmed = trimTrail(trail, at);
     next.set(peerId, trimmed);
     const pose = sampleTrail(trimmed, at);
-    if (pose) poses.push(pose);
+    if (pose) poses.push({ ...pose, id: peerId });
   }
   return { trails: next, poses };
 }

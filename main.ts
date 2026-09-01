@@ -6,6 +6,7 @@
 import type { Ending, Rival, Scene, Stroke } from "./scene3d.ts";
 import { createRenderer } from "./scene3d.ts";
 import type { Input, Race, Steer } from "./regatta.ts";
+import type { Pose } from "./net.ts";
 import {
   BOAT_RADIUS,
   IDLE,
@@ -41,6 +42,7 @@ const againEl = document.querySelector<HTMLButtonElement>("#again");
 const inviteEl = document.querySelector<HTMLElement>("#invite");
 const shareEl = document.querySelector<HTMLButtonElement>("#share");
 const shareFaceEl = document.querySelector<HTMLElement>("#share-face");
+const fieldEl = document.querySelector<HTMLOListElement>("#field");
 
 if (
   !canvas ||
@@ -51,7 +53,8 @@ if (
   !againEl ||
   !inviteEl ||
   !shareEl ||
-  !shareFaceEl
+  !shareFaceEl ||
+  !fieldEl
 ) {
   throw new Error("the page is missing an element the race needs");
 }
@@ -66,6 +69,7 @@ const verdict = verdictEl;
 const times = timesEl;
 const invite = inviteEl;
 const shareFace = shareFaceEl;
+const standings = fieldEl;
 
 // The room code is the seed. Two people who open the same link race the same
 // water without a byte of terrain crossing between them.
@@ -278,6 +282,39 @@ function showResult(): void {
   invite.classList.remove("dim");
 }
 
+/**
+ * Ranked live by distance down the river, never by finish time -- the one
+ * thing this can say that the finish panel can't. Empty and hidden until a
+ * real rival's pose actually lands, same signal the boat itself is drawn
+ * from, so the indicator never claims a connection the scene doesn't show.
+ */
+function renderStandings(rivals: Pose[]): void {
+  if (rivals.length === 0) {
+    standings.hidden = true;
+    return;
+  }
+  // Sorted by id, not join order, so a row's label stays put across a
+  // mid-race leave/rejoin instead of relabelling everyone still in the room.
+  const ids = rivals.map((r) => r.id).sort();
+  const label = (id: string): string =>
+    ids.length === 1 ? "Rival" : `Rival ${ids.indexOf(id) + 1}`;
+
+  const entries = [
+    { label: "You", y: race.boat.y, self: true },
+    ...rivals.map((r) => ({ label: label(r.id), y: r.y, self: false })),
+  ].sort((a, b) => b.y - a.y);
+
+  standings.replaceChildren(
+    ...entries.map(({ label: text, self }, i) => {
+      const li = document.createElement("li");
+      li.textContent = `${i + 1} ${text}`;
+      if (self) li.classList.add("self");
+      return li;
+    }),
+  );
+  standings.hidden = false;
+}
+
 function finish(selfMs: number): void {
   selfFinishMs = selfMs;
   finishedAt = performance.now();
@@ -369,6 +406,7 @@ function frame(now: number): void {
   // Real people displace the pacer the moment their snapshots land -- all of
   // them, however many are in the room. The pacer only paces an empty river.
   const peers = net.posesAt(now);
+  renderStandings(peers);
   const pacer = pacerPose(race.elapsedMs, race.startY);
   const rivals: Rival[] =
     peers.length > 0
